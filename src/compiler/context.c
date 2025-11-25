@@ -121,7 +121,7 @@ bool context_set_module_from_filename(ParseContext *context)
 		return false;
 	}
 	Path *path = CALLOCS(Path);
-	path->span = INVALID_SPAN;
+	path->span = context->span;
 	path->module = module_name;
 	path->len = scratch_buffer.len;
 	return create_module_or_check_name(context->unit, path, NULL);
@@ -142,6 +142,7 @@ bool context_is_macro(SemaContext *context)
 
 void unit_register_external_symbol(SemaContext *context, Decl *decl)
 {
+	decl = decl_flatten(decl);
 	if (decl->is_external_visible) return;
 	Module *active_module = context->current_macro ? context->original_module : context->compilation_unit->module;
 	if (decl->unit->module == active_module) return;
@@ -156,24 +157,26 @@ void decl_register(Decl *decl)
 	{
 		case DECL_ERASED:
 			return;
-		case DECL_POISONED:
+		case DECL_ALIAS_PATH:
+		case DECL_BODYPARAM:
 		case DECL_CT_ASSERT:
 		case DECL_CT_ECHO:
 		case DECL_CT_EXEC:
+		case DECL_CT_INCLUDE:
+		case DECL_DECLARRAY:
 		case DECL_ENUM_CONSTANT:
+		case DECL_GROUP:
 		case DECL_IMPORT:
 		case DECL_LABEL:
-		case DECL_DECLARRAY:
-		case DECL_BODYPARAM:
-		case DECL_CT_INCLUDE:
-		case DECL_GROUP:
-			UNREACHABLE
+		case DECL_POISONED:
+			UNREACHABLE_VOID
 		case DECL_ATTRIBUTE:
 		case DECL_BITSTRUCT:
-		case DECL_DISTINCT:
-		case DECL_ENUM:
-		case DECL_STRUCT:
 		case DECL_TYPEDEF:
+		case DECL_ENUM:
+		case DECL_CONST_ENUM:
+		case DECL_STRUCT:
+		case DECL_TYPE_ALIAS:
 		case DECL_UNION:
 		case DECL_ALIAS:
 		case DECL_FUNC:
@@ -234,10 +237,10 @@ void unit_register_global_decl(CompilationUnit *unit, Decl *decl)
 			decl_register(decl);
 			break;
 		case DECL_INTERFACE:
-		case DECL_DISTINCT:
+		case DECL_TYPEDEF:
 		case DECL_STRUCT:
 		case DECL_UNION:
-		case DECL_TYPEDEF:
+		case DECL_TYPE_ALIAS:
 		case DECL_BITSTRUCT:
 			ASSERT(decl->name);
 			vec_add(unit->types, decl);
@@ -253,6 +256,7 @@ void unit_register_global_decl(CompilationUnit *unit, Decl *decl)
 			vec_add(unit->generic_defines, decl);
 			decl_register(decl);
 			break;
+		case DECL_CONST_ENUM:
 		case DECL_ENUM:
 			ASSERT(decl->name);
 			vec_add(unit->enums, decl);
@@ -262,14 +266,15 @@ void unit_register_global_decl(CompilationUnit *unit, Decl *decl)
 			vec_add(unit->attributes, decl);
 			decl_register(decl);
 			break;
+		case DECL_ALIAS_PATH:
+		case DECL_BODYPARAM:
+		case DECL_DECLARRAY:
 		case DECL_ENUM_CONSTANT:
+		case DECL_FNTYPE:
+		case DECL_GROUP:
 		case DECL_IMPORT:
 		case DECL_LABEL:
-		case DECL_DECLARRAY:
-		case DECL_BODYPARAM:
-		case DECL_GROUP:
-		case DECL_FNTYPE:
-			UNREACHABLE
+			UNREACHABLE_VOID
 		case DECL_CT_EXEC:
 		case DECL_CT_INCLUDE:
 			vec_add(unit->ct_includes, decl);
@@ -284,17 +289,28 @@ void unit_register_global_decl(CompilationUnit *unit, Decl *decl)
 	DEBUG_LOG("Registering symbol '%s' in %s.", decl->name, unit->module->name->module);
 
 	Decl *old;
-	if ((old = htable_set(&unit->local_symbols, (void*)decl->name, decl))) goto ERR;
-	if (decl->visibility < VISIBLE_LOCAL)
+	if ((old = htable_set(&unit->local_symbols, (void*)decl->name, decl)))
 	{
-		if ((old = htable_set(&unit->module->symbols, (void*)decl->name, decl))) goto ERR;
+		sema_shadow_error(NULL, decl, old);
+		decl_poison(decl);
+		decl_poison(old);
+		return;
 	}
-	return;
-ERR:
-	ASSERT(decl != old);
-	sema_shadow_error(NULL, decl, old);
-	decl_poison(decl);
-	decl_poison(old);
+
+	if ((old = htable_set(&unit->module->symbols, (void*)decl->name, decl)))
+	{
+		if (old->visibility == VISIBLE_LOCAL && decl->visibility == VISIBLE_LOCAL) return;
+		if (old->visibility == VISIBLE_LOCAL)
+		{
+			sema_shadow_error(NULL, old, decl);
+		}
+		else
+		{
+			sema_shadow_error(NULL, decl, old);
+		}
+		decl_poison(decl);
+		decl_poison(old);
+	}
 }
 
 
@@ -313,6 +329,15 @@ bool unit_add_import(CompilationUnit *unit, Path *path, bool private_import, boo
 	vec_add(unit->imports, import);
 	if (private_import) vec_add(unit->public_imports, import);
 	DEBUG_LOG("Added import %s", path->module);
+	return true;
+}
+
+bool unit_add_alias(CompilationUnit *unit, Decl *alias)
+{
+	DEBUG_LOG("SEMA: Add module alias '%s'.", alias->name);
+
+	if (!check_module_name(alias->module_alias_decl.alias_path)) return false;
+	vec_add(unit->module_aliases, alias);
 	return true;
 }
 

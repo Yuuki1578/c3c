@@ -259,6 +259,10 @@ static void view_target(BuildParseContext context, JSONObject *target, bool verb
 	TARGET_VIEW_SETTING("x64 CPU level", "x86cpu", x86_cpu_set);
 	TARGET_VIEW_SETTING("Max vector use type", "x86vec", x86_vector_capability);
 	TARGET_VIEW_BOOL("Return structs on the stack", "x86-stack-struct-return");
+	TARGET_VIEW_BOOL("Unroll loops", "unroll-loops");
+	TARGET_VIEW_BOOL("SLP auto-vectorization", "slp-vectorize");
+	TARGET_VIEW_BOOL("Loop auto-vectorization", "loop-vectorize");
+	TARGET_VIEW_BOOL("Merge functions", "merge-functions");
 }
 
 
@@ -536,6 +540,8 @@ void view_project(BuildOptions *build_options)
 	VIEW_STRING_ARRAY("Source paths", "sources", ", ");
 	VIEW_STRING_ARRAY("C source paths", "c-sources", ", ");
 	VIEW_STRING("Output location", "output");
+	VIEW_STRING("Build location", "build-dir");
+	VIEW_STRING("Output extension", "extension");
 	VIEW_SETTING("Default optimization level", "opt", optimization_levels);
 
 	/* Extended information */

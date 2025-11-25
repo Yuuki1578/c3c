@@ -1,4 +1,4 @@
-// Copyright (c) 2021-2022 Christoffer Lerno. All rights reserved.
+// Copyright (c) 2021-2025 Christoffer Lerno. All rights reserved.
 // Use of this source code is governed by the MIT license
 // a copy of which can be found in the LICENSE_STDLIB file.
 module std::io;
@@ -16,6 +16,7 @@ faultdef
 	BUSY,
 	CANNOT_READ_DIR,
 	DIR_NOT_EMPTY,
+	PARENT_DIR_MISSING,
 	EOF,
 	FILE_CANNOT_DELETE,
 	FILE_IS_DIR,
@@ -34,6 +35,7 @@ faultdef
 	NO_PERMISSION,
 	OUT_OF_SPACE,
 	OVERFLOW,
+	PATH_COULD_NOT_BE_FOUND,
 	READ_ONLY,
 	SYMLINK_FAILED,
 	TOO_MANY_DESCRIPTORS,
@@ -49,41 +51,23 @@ faultdef
  "\r" will be filtered from the String.
 
  @param stream : `The stream to read from.`
- @require @is_instream(stream) : `The stream must implement InStream.`
+ @require @is_not_instream_if_ptr(stream) : "The value for 'stream' should have been passed as a pointer and not as a value, please add '&'."
+ @require @is_instream(stream) : `Make sure that the stream is actually an InStream.`
  @param [inout] allocator : `the allocator to use.`
  @return `The string containing the data read.`
 *>
 macro String? readline(Allocator allocator, stream = io::stdin())
 {
-	bool $is_stream = @typeis(stream, InStream);
-	$if $is_stream:
-		$typeof(&stream.read_byte) func = &stream.read_byte;
-		char val = func((void*)stream)!;
-	$else
-		char val = stream.read_byte()!;
-	$endif
-
-	if (val == '\n') return "";
+	if (allocator == tmem)
+	{
+		DString str = dstring::temp_with_capacity(256);
+		readline_to_stream(&str, stream)!;
+		return str.str_view();
+	}
 	@pool()
 	{
 		DString str = dstring::temp_with_capacity(256);
-		if (val != '\r') str.append(val);
-		while (1)
-		{
-			$if $is_stream:
-				char? c = func((void*)stream);
-			$else
-				char? c = stream.read_byte();
-			$endif
-			if (catch err = c)
-			{
-				if (err == io::EOF) break;
-				return err?;
-			}
-			if (c == '\r') continue;
-			if (c == '\n') break;
-			str.append_char(c);
-		}
+		readline_to_stream(&str, stream)!;
 		return str.copy_str(allocator);
 	};
 }
@@ -93,6 +77,7 @@ macro String? readline(Allocator allocator, stream = io::stdin())
  on the temporary allocator and does not need to be freed.
 
  @param stream : `The stream to read from.`
+ @require @is_not_instream_if_ptr(stream) : "The value for 'stream' should have been passed as a pointer and not as a value, please add '&'."
  @require @is_instream(stream) : `The stream must implement InStream.`
  @return `The temporary string containing the data read.`
 *>
@@ -101,6 +86,65 @@ macro String? treadline(stream = io::stdin())
 	return readline(tmem, stream) @inline;
 }
 
+<*
+ Reads a string, see `readline`, the data is passed to an outstream
+
+ @param out_stream : `The stream to write to`
+ @param in_stream : `The stream to read from.`
+ @require @is_not_instream_if_ptr(in_stream) : "The value for 'in_stream' should have been passed as a pointer and not as a value, please add '&'."
+ @require @is_not_outstream_if_ptr(out_stream) : "The value for 'out_stream' should have been passed as a pointer and not as a value, please add '&'."
+ @require @is_instream(in_stream) : `The in_stream must implement InStream.`
+ @require @is_outstream(out_stream) : `The out_stream must implement OutStream.`
+ @return `The number of bytes written`
+*>
+macro usz? readline_to_stream(out_stream, in_stream = io::stdin())
+{
+	bool $is_stream = $typeof(in_stream) == InStream;
+	$if $is_stream:
+		var func = &in_stream.read_byte;
+		char val = func((void*)in_stream)!;
+	$else
+		char val = in_stream.read_byte()!;
+	$endif
+	bool $is_out_stream = $typeof(out_stream) == OutStream;
+	$if $is_out_stream:
+		var out_func = &out_stream.write_byte;
+	$endif
+
+	if (val == '\n') return 0;
+	usz len;
+	if (val != '\r')
+	{
+		$if $is_out_stream:
+			out_func((void*)out_stream.ptr, val)!;
+		$else
+			out_stream.write_byte(val)!;
+		$endif
+		len++;
+	}
+	while (1)
+	{
+		$if $is_stream:
+			char? c = func((void*)in_stream);
+		$else
+			char? c = in_stream.read_byte();
+		$endif
+		if (catch err = c)
+		{
+			if (err == io::EOF) break;
+			return err?;
+		}
+		if (c == '\r') continue;
+		if (c == '\n') break;
+		$if $is_out_stream:
+			out_func((void*)out_stream.ptr, c)!;
+		$else
+			out_stream.write_byte(c)!;
+		$endif
+		len++;
+	}
+	return len;
+}
 <*
  Print a value to a stream.
 
@@ -117,7 +161,7 @@ macro usz? fprint(out, x)
 		$case ZString: return out.write(x.str_view());
 		$case DString: return out.write(x.str_view());
 		$default:
-			$if $assignable(x, String):
+			$if $defined(String a = x):
 				return out.write((String)x);
 			$else
 				$if is_struct_with_default_print($Type):
@@ -172,7 +216,7 @@ macro usz? fprintn(out, x = "")
 	usz len = fprint(out, x)!;
 	out.write_byte('\n')!;
 	$switch:
-		$case @typeid(out) == OutStream.typeid:
+		$case $typeof(out) == OutStream:
 			if (&out.flush) out.flush()!;
 		$case $defined(out.flush):
 			out.flush()!;
@@ -211,7 +255,7 @@ macro void eprint(x)
 
  @param x : "The value to print"
 *>
-macro void eprintn(x)
+macro void eprintn(x = "")
 {
 	(void)fprintn(io::stderr(), x);
 }

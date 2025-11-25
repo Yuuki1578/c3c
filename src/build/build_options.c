@@ -43,6 +43,7 @@ const char *arch_os_target[ARCH_OS_TARGET_LAST + 1];
 #define EOUTPUT(string, ...) fprintf(stderr, string "\n", ##__VA_ARGS__) // NOLINT
 #define PRINTF(string, ...) fprintf(stdout, string "\n", ##__VA_ARGS__) // NOLINT
 #define FAIL_WITH_ERR(string, ...) do { fprintf(stderr, "Error: " string "\n\n", ##__VA_ARGS__); usage(false); exit_compiler(EXIT_FAILURE); } while (0) /* NOLINT */
+#define FAIL_WITH_ERR_LONG(string, ...) do { fprintf(stderr, "Error: " string "\n\n", ##__VA_ARGS__); usage(true); exit_compiler(EXIT_FAILURE); } while (0) /* NOLINT */
 #define PROJECT_FAIL_WITH_ERR(string, ...) do { fprintf(stderr, "Error: " string "\n\n", ##__VA_ARGS__); project_usage(); exit_compiler(EXIT_FAILURE); } while (0) /* NOLINT */
 
 static void usage(bool full)
@@ -96,6 +97,7 @@ static void usage(bool full)
 	print_opt("--run-dir <dir>", "Set the directory from where to run the binary (only for run and compile-run).");
 	print_opt("--libdir <dir>", "Add this directory to the c3l library search paths.");
 	print_opt("--lib <name>", "Add this c3l library to the compilation.");
+	print_opt("--sources <file1> [<file2> ...]", "Add these additional sources to the compilation.");
 	if (full)
 	{
 		print_opt("--validation=<option>", "Strictness of code validation: lenient (default), strict, obnoxious (very strict)");
@@ -104,6 +106,7 @@ static void usage(bool full)
 		print_opt("--path <dir>", "Use this as the base directory for the current command.");
 		print_opt("--template <template>", "Select template for 'init': \"exe\", \"static-lib\", \"dynamic-lib\" or a path.");
 		print_opt("--symtab <value>", "Sets the preferred symtab size.");
+		print_opt("--max-mem <value>", "Set the maximum memory size (in MB).");
 		print_opt("--run-once", "After running the output file, delete it immediately.");
 		print_opt("--suppress-run", "Build but do not run on test/benchmark options.");
 		print_opt("--trust=<option>", "Trust level: none (default), include ($include allowed), full ($exec / exec allowed).");
@@ -125,10 +128,16 @@ static void usage(bool full)
 		print_opt("--panic-msg=<yes|no>", "Turn panic message output on or off.");
 		print_opt("--optlevel=<option>", "Code optimization level: none, less, more, max.");
 		print_opt("--optsize=<option>", "Code size optimization: none, small, tiny.");
+		print_opt("--unroll-loops=<yes|no>", "Enable loop unrolling.");
+		print_opt("--loop-vectorize=<yes|no>", "Enable loop auto-vectorization.");
+		print_opt("--slp-vectorize=<yes|no>", "Enable SLP (superword-level parallelism) auto-vectorization.");
+		print_opt("--merge-functions=<yes|no>", "Enable function merging.");
 		print_opt("--single-module=<yes|no>", "Compile all modules together, enables more inlining.");
 		print_opt("--show-backtrace=<yes|no>", "Show detailed backtrace on segfaults.");
 		print_opt("--lsp", "Emit data about errors suitable for a LSP.");
 		print_opt("--use-old-slice-copy", "Use the old slice copy semantics.");
+		print_opt("--use-old-enums", "Use the old enum syntax and semantics.");
+		print_opt("--use-old-compact-eq", "Enable the old ability to use '@compact' to make a struct comparable.");
 	}
 	PRINTF("");
 	print_opt("-g", "Emit debug info.");
@@ -137,12 +146,15 @@ static void usage(bool full)
 	{
 		PRINTF("");
 		print_opt("--ansi=<yes|no>", "Set colour output using ansi on/off, default is to try to detect it.");
+		print_opt("--echo-prefix <arg>", "Sets the prefix for any output using '$echo', defaults to 'c3c:'.");
 		print_opt("--test-filter <arg>", "Set a filter when running tests, running only matching tests.");
 		print_opt("--test-breakpoint", "When running tests, trigger a breakpoint on failure.");
 		print_opt("--test-nosort", "Do not sort tests.");
-		print_opt("--test-noleak", "Disable tracking allocator and memory leak detection for tests");
-		print_opt("--test-nocapture", "Disable test stdout capturing, all tests can print as they run");
+		print_opt("--test-noleak", "Disable tracking allocator and memory leak detection for tests.");
+		print_opt("--test-show-output", "Disable test stdout capturing, all tests can print as they run.");
+		print_opt("--test-nocapture", "Disable test stdout capturing, all tests can print as they run, same as --test-show-output.");
 		print_opt("--test-quiet", "Run tests without printing full names, printing output only on failure");
+		print_opt("--test-log-level=<verbose|debug|info|warn|error|critical>", "Set log priority when running tests.");
 	}
 	PRINTF("");
 	print_opt("-l <library>", "Link with the static or dynamic library provided.");
@@ -156,20 +168,25 @@ static void usage(bool full)
 		print_opt("--use-stdlib=<yes|no>", "Include the standard library (default: yes).");
 		print_opt("--link-libc=<yes|no>", "Link libc other default libraries (default: yes).");
 		print_opt("--emit-stdlib=<yes|no>", "Output files for the standard library. (default: yes)");
+		print_opt("--emit-only <file>", "Output only the file matching <file>.");
 		print_opt("--panicfn <name>", "Override the panic function name.");
 		print_opt("--testfn <name>", "Override the test runner function name.");
 		print_opt("--benchfn <name>", "Override the benchmark runner function name.");
 		PRINTF("");
 		print_opt("--reloc=<option>", "Relocation model: none, pic, PIC, pie, PIE.");
+		print_opt("--cpu-flags <string>", "Add/remove cpu flags fromt the default, e.g. '+a,-b'.");
 		print_opt("--x86cpu=<option>", "Set general level of x64 cpu: baseline, ssse3, sse4, avx1, avx2-v1, avx2-v2 (Skylake/Zen1+), avx512 (Icelake/Zen4+), native.");
 		print_opt("--x86vec=<option>", "Set max type of vector use: none, mmx, sse, avx, avx512, default.");
-		print_opt("--riscvfloat=<option>", "Set type of RISC-V float support: none, float, double.");
+		print_opt("--riscv-abi=<option>", "Set type of RISC-V ABI: int-only, float, double.");
+		print_opt("--riscv-cpu=<option>", "Set the general level of RISC-V cpu: rvi (default 32-bit) , rvimac, rvimafc, rvgc (default 64-bit), rvgcv.");
 		print_opt("--memory-env=<option>", "Set the memory environment: normal, small, tiny, none.");
 		print_opt("--strip-unused=<yes|no>", "Strip unused code and globals from the output. (default: yes)");
 		print_opt("--fp-math=<option>", "FP math behaviour: strict, relaxed, fast.");
 		print_opt("--win64-simd=<option>", "Win64 SIMD ABI: array, full.");
 		print_opt("--win-debug=<option>", "Select debug output on Windows: codeview or dwarf (default: codeview).");
 		print_opt("--max-vector-size <number>", "Set the maximum vector bit size to allow (default: 4096).");
+		print_opt("--max-stack-object-size <number>", "Set the maximum size of a stack object in KB (default: 128).");
+		print_opt("--max-macro-iterations <number>", "Set the maximum number of iterations in a macro loop (default: 1048575).");
 		PRINTF("");
 		print_opt("--print-linking", "Print linker arguments.");
 		PRINTF("");
@@ -185,6 +202,7 @@ static void usage(bool full)
 		print_opt("--list-manifest-properties", "List all available keys used in manifest.json files.");
 		print_opt("--list-targets", "List all architectures the compiler supports.");
 		print_opt("--list-type-properties", "List all type properties.");
+		print_opt("--list-asm", "List all asm instructions for the current target.");
 		PRINTF("");
 		print_opt("--print-output", "Print the object files created to stdout.");
 		print_opt("--print-input", "Print inputted C3 files to stdout.");
@@ -240,7 +258,7 @@ static void project_view_usage()
 	PRINTF("the results will be printed out like they are in the full view.");
 	PRINTF("Otherwise the \"<header>: \" is left out.");
 	PRINTF("");
-	PRINTF("With flags on, each selected property will be seperated by an empty");
+	PRINTF("With flags on, each selected property will be separated by an empty");
 	PRINTF("line, and properties with multiple values (like --authors) will have");
 	PRINTF("their values printed each on a new line.");
 	PRINTF("");
@@ -582,7 +600,7 @@ static void parse_option(BuildOptions *options)
 			if (match_shortopt("o"))
 			{
 				if (at_end()) error_exit("error: -o needs a name.");
-				options->output_name = next_arg();
+				options->runner_output_name = options->output_name = next_arg();
 				return;
 			}
 			break;
@@ -721,14 +739,50 @@ static void parse_option(BuildOptions *options)
 				options->ansi = parse_opt_select(Ansi, argopt, on_off);
 				return;
 			}
+			if (match_longopt("max-mem"))
+			{
+				if (at_end() || next_is_opt())
+				{
+					FAIL_WITH_ERR_LONG("'--max-mem' expected a max memory.");
+				}
+				if (atoll(next_arg()) < 1)
+				{
+					FAIL_WITH_ERR_LONG("'--max-mem' expected a positive integer value.");
+				}
+				return;
+			}
+			if (match_longopt("sources"))
+			{
+				if (at_end() || next_is_opt())
+				{
+					FAIL_WITH_ERR_LONG("'--sources' expected at least one source file.");
+				}
+				do
+				{
+					next_arg();
+					append_file(options);
+
+				} while(!(at_end() || next_is_opt()));
+				return;
+			}
 			if (match_longopt("use-old-slice-copy"))
 			{
 				options->old_slice_copy = true;
 				return;
 			}
+			if (match_longopt("use-old-enums"))
+			{
+				options->old_enums = true;
+				return;
+			}
+			if (match_longopt("use-old-compact-eq"))
+			{
+				options->old_compact_eq = true;
+				return;
+			}
 			if (match_longopt("test-filter"))
 			{
-				if (at_end() || next_is_opt()) error_exit("error: --test-filter needs an argument.");
+				if (at_end() || next_is_opt()) FAIL_WITH_ERR_LONG("error: --test-filter needs an argument.");
 				options->test_filter = next_arg();
 				return;
 			}
@@ -742,9 +796,9 @@ static void parse_option(BuildOptions *options)
 				options->test_noleak = true;
 				return;
 			}
-			if (match_longopt("test-nocapture"))
+			if (match_longopt("test-nocapture") || match_longopt("test-show-output"))
 			{
-				options->test_nocapture = true;
+				options->test_show_output = true;
 				return;
 			}
 			if (match_longopt("test-quiet"))
@@ -770,13 +824,13 @@ static void parse_option(BuildOptions *options)
 			}
 			if (match_longopt("symtab"))
 			{
-				if (at_end() || next_is_opt()) error_exit("error: --symtab needs a valid integer.");
+				if (at_end() || next_is_opt()) FAIL_WITH_ERR_LONG("error: --symtab needs a valid integer.");
 				const char *symtab_string = next_arg();
 				int symtab = atoi(symtab_string);
-				if (symtab < 1024) error_exit("Expected the --symtab size to be valid positive integer >= 1024.");
+				if (symtab < 1024) FAIL_WITH_ERR_LONG("Expected the --symtab size to be valid positive integer >= 1024.");
 				if (symtab > MAX_SYMTAB_SIZE)
 				{
-					error_exit("The symtab size is too large. The maximum size is %d.", (int)MAX_SYMTAB_SIZE);
+					FAIL_WITH_ERR_LONG("The symtab size is too large. The maximum size is %d.", (int)MAX_SYMTAB_SIZE);
 				}
 				options->symtab_size = next_highest_power_of_2(symtab);
 				return;
@@ -817,6 +871,31 @@ static void parse_option(BuildOptions *options)
 				options->optlevel = parse_opt_select(OptimizationLevel, argopt, optlevels);
 				return;
 			}
+			if ((argopt = match_argopt("test-log-level")))
+			{
+				options->test_log_level = parse_opt_select(TestLogLevel, argopt, test_log_levels);
+				return;
+			}
+			if ((argopt = match_argopt("merge-functions")))
+			{
+				options->merge_functions = parse_opt_select(MergeFunctions, argopt, on_off);
+				return;
+			}
+			if ((argopt = match_argopt("loop-vectorize")))
+			{
+				options->loop_vectorization = parse_opt_select(AutoVectorization, argopt, on_off);
+				return;
+			}
+			if ((argopt = match_argopt("unroll-loops")))
+			{
+				options->unroll_loops = parse_opt_select(UnrollLoops, argopt, on_off);
+				return;
+			}
+			if ((argopt = match_argopt("slp-vectorize")))
+			{
+				options->slp_vectorization = parse_opt_select(AutoVectorization, argopt, on_off);
+				return;
+			}
 			if ((argopt = match_argopt("safe")))
 			{
 				options->safety_level = parse_opt_select(SafetyLevel, argopt, on_off);
@@ -840,7 +919,7 @@ static void parse_option(BuildOptions *options)
 			if ((argopt = match_argopt("linker")))
 			{
 				options->custom_linker_path = NULL;
-				options->linker_type = parse_opt_select(LinkerType, argopt, linker);
+				options->linker_type = parse_opt_select(LinkerType, argopt, linker_kind);
 				if (options->linker_type == LINKER_TYPE_CUSTOM)
 				{
 					if (at_end() || next_is_opt()) error_exit("error: --linker=custom expects a valid linker name.");
@@ -861,6 +940,12 @@ static void parse_option(BuildOptions *options)
 			if ((argopt = match_argopt("emit-stdlib")))
 			{
 				options->emit_stdlib = parse_opt_select(EmitStdlib, argopt, on_off);
+				return;
+			}
+			if (match_longopt("emit-only"))
+			{
+				if (at_end() || next_is_opt()) error_exit("error: --emit-only expects an output name, e.g. 'foo', to only output 'foo.o'.");
+				vec_add(options->emit_only, next_arg());
 				return;
 			}
 			if ((argopt = match_argopt("use-stdlib")))
@@ -888,20 +973,60 @@ static void parse_option(BuildOptions *options)
 				options->x86_cpu_set = parse_opt_select(X86CpuSet, argopt, x86_cpu_set);
 				return;
 			}
-			if ((argopt = match_argopt("riscvfloat")))
+			if ((argopt = match_argopt("riscv-cpu")))
 			{
-				options->riscv_float_capability = parse_opt_select(RiscvFloatCapability, argopt, riscv_capability);
+				options->riscv_cpu_set = parse_opt_select(RiscvCpuSet, argopt, riscv_cpu_set);
 				return;
 			}
-			if ((argopt = match_argopt("max-vector-size")))
+			if ((argopt = match_argopt("riscvfloat")))
 			{
-				int size = atoi(next_arg());
-				if (size < 128) error_exit("Expected a valid positive integer >= 128 or --max-vector-size.");
+				options->riscv_abi = parse_opt_select(RiscvAbi, argopt, riscv_capability);
+				return;
+			}
+			if ((argopt = match_argopt("riscv-abi")))
+			{
+				options->riscv_abi = parse_opt_select(RiscvAbi, argopt, riscv_abi);
+				return;
+			}
+			if (match_longopt("cpu-flags"))
+			{
+				if (at_end() || next_is_opt()) error_exit("error: --cpu-flags expected a comma-separated list, like '+a,-b,+x'.");
+				scratch_buffer_clear();
+				if (options->cpu_flags)
+				{
+					scratch_buffer_append(options->cpu_flags);
+					scratch_buffer_append_char(',');
+				}
+				scratch_buffer_append(next_arg());
+				options->cpu_flags = scratch_buffer_copy();
+				return;
+			}
+			if (match_longopt("max-stack-object-size"))
+			{
+				int size = (at_end() || next_is_opt()) ? 0 : atoi(next_arg());
+				if (size < 1) error_exit("Expected a valid positive integer >= 1 for --max-stack-object-size.");
+				if (size > MAX_STACK_OBJECT_SIZE) error_exit("Expected a valid positive integer <= %u for --max-stack-object-size.", (unsigned)MAX_STACK_OBJECT_SIZE);
+				options->max_stack_object_size = size;
+				return;
+			}
+			if (match_longopt("max-macro-iterations"))
+			{
+				int size = (at_end() || next_is_opt()) ? 0 : atoi(next_arg());
+				if (size < 1) error_exit("Expected a valid positive integer >= 128 for --max-macro-iterations");
+				if (size > MAX_MACRO_ITERATIONS) error_exit("Expected a valid positive integer <= %u for --max-macro-iterations.", (unsigned)MAX_MACRO_ITERATIONS);
+				options->max_macro_iterations = size;
+				return;
+			}
+			if (match_longopt("max-vector-size"))
+			{
+				int size = (at_end() || next_is_opt()) ? 0 : atoi(next_arg());
+				if (size < 128) error_exit("Expected a valid positive integer >= 128 for --max-vector-size.");
 				if (size > MAX_VECTOR_WIDTH) error_exit("Expected a valid positive integer <= %u for --max-vector-size.", (unsigned)MAX_VECTOR_WIDTH);
 				if (size != next_highest_power_of_2(size))
 				{
 					error_exit("The --max-vector-size value must be a power of 2, try using %u instead.", next_highest_power_of_2(size));
 				}
+				options->max_vector_size = size;
 				return;
 			}
 			if ((argopt = match_argopt("memory-env")))
@@ -964,6 +1089,11 @@ static void parse_option(BuildOptions *options)
 				options->command = COMMAND_PRINT_SYNTAX;
 				return;
 			}
+			if (match_longopt("list-asm"))
+			{
+				options->print_asm = true;
+				return;
+			}
 			if (match_longopt("list-project-properties"))
 			{
 				options->print_project_properties = true;
@@ -996,6 +1126,12 @@ static void parse_option(BuildOptions *options)
 				if (threads < 1) PRINTF("Expected a valid integer 1 or higher.");
 				if (threads > MAX_THREADS) PRINTF("Cannot exceed %d threads.", MAX_THREADS);
 				options->build_threads = threads;
+				return;
+			}
+			if (match_longopt("echo-prefix"))
+			{
+				if (at_end() || next_is_opt()) error_exit("error: --echo-prefix needs a prefix.");
+				options->echo_prefix = next_arg();
 				return;
 			}
 			if (match_longopt("target"))
@@ -1199,7 +1335,7 @@ static void parse_option(BuildOptions *options)
 						           name);
 					}
 					char *name_copy = strdup(name);
-					str_ellide_in_place(name_copy, 32);
+					str_elide_in_place(name_copy, 32);
 					if (strchr(name, '/') != NULL || (PLATFORM_WINDOWS && strchr(name, '\\') != NULL))
 					{
 						error_exit(
@@ -1307,7 +1443,7 @@ static void parse_option(BuildOptions *options)
 			break;
 
 	}
-	FAIL_WITH_ERR("Cannot process the unknown option \"%s\".", current_arg);
+	FAIL_WITH_ERR_LONG("Cannot process the unknown option \"%s\".", current_arg);
 }
 
 BuildOptions parse_arguments(int argc, const char *argv[])
@@ -1327,6 +1463,7 @@ BuildOptions parse_arguments(int argc, const char *argv[])
 		.emit_llvm = false,
 		.optsetting = OPT_SETTING_NOT_SET,
 		.debug_info_override = DEBUG_INFO_NOT_SET,
+		.test_log_level = TESTLOGLEVEL_NOT_SET,
 		.safety_level = SAFETY_NOT_SET,
 		.panic_level = PANIC_NOT_SET,
 		.show_backtrace = SHOW_BACKTRACE_NOT_SET,
@@ -1341,7 +1478,7 @@ BuildOptions parse_arguments(int argc, const char *argv[])
 		.win_debug = WIN_DEBUG_DEFAULT,
 		.fp_math = FP_DEFAULT,
 		.x86_cpu_set = X86CPU_DEFAULT,
-		.riscv_float_capability = RISCVFLOAT_DEFAULT,
+		.riscv_abi = RISCV_ABI_DEFAULT,
 		.memory_environment = MEMORY_ENV_NOT_SET,
 		.win.crt_linking = WIN_CRT_DEFAULT,
 		.emit_stdlib = EMIT_STDLIB_NOT_SET,
@@ -1418,7 +1555,7 @@ BuildOptions parse_arguments(int argc, const char *argv[])
 			const char *ndk_path = getenv("ANDROID_NDK");
 			if (!ndk_path)
 			{
-				FAIL_WITH_ERR("Can't find Android NDK, please set --ndk-path.");
+				FAIL_WITH_ERR("Can't find Android NDK, please set --android-ndk.");
 			}
 			build_options.android.ndk_path = strdup(ndk_path);
 		}

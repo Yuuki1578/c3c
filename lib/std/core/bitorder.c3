@@ -88,93 +88,97 @@ bitstruct UInt128LE : uint128 @littleendian
 }
 
 <*
- @require is_array_or_slice_of_char(bytes) : "argument must be an array, a pointer to an array or a slice of char"
+ @require @is_array_or_slice_of_char(bytes) : "argument must be an array, a pointer to an array or a slice of char"
  @require is_bitorder($Type) : "type must be a bitorder integer"
 *>
 macro read(bytes, $Type)
 {
 	char[] s;
-	$switch @typekind(bytes):
-	$case POINTER:
-		s = (*bytes)[:$Type.sizeof];
-	$default:
-		s = bytes[:$Type.sizeof];
+	$switch $kindof(bytes):
+		$case POINTER:
+			s = (*bytes)[:$Type.sizeof];
+		$default:
+			s = bytes[:$Type.sizeof];
 	$endswitch
 	return bitcast(*(char[$Type.sizeof]*)s.ptr, $Type).val;
 }
 
 <*
- @require is_arrayptr_or_slice_of_char(bytes) : "argument must be a pointer to an array or a slice of char"
+ @require @is_arrayptr_or_slice_of_char(bytes) : "argument must be a pointer to an array or a slice of char"
  @require is_bitorder($Type) : "type must be a bitorder integer"
 *>
 macro write(x, bytes, $Type)
 {
 	char[] s;
-	$switch @typekind(bytes):
-	$case POINTER:
-		s = (*bytes)[:$Type.sizeof];
-	$default:
-		s = bytes[:$Type.sizeof];
+	$switch $kindof(bytes):
+		$case POINTER:
+			s = (*bytes)[:$Type.sizeof];
+		$default:
+			s = bytes[:$Type.sizeof];
 	$endswitch
 	*($typeof(x)*)s.ptr = bitcast(x, $Type).val;
 }
 
-macro is_bitorder($Type)
+macro bool is_bitorder($Type)
 {
 	$switch $Type:
-	$case UShortLE:
-	$case ShortLE:
-	$case UIntLE:
-	$case IntLE:
-	$case ULongLE:
-	$case LongLE:
-	$case UInt128LE:
-	$case Int128LE:
-	$case UShortBE:
-	$case ShortBE:
-	$case UIntBE:
-	$case IntBE:
-	$case ULongBE:
-	$case LongBE:
-	$case UInt128BE:
-	$case Int128BE:
-		return true;
-	$default:
-		return false;
+		$case UShortLE:
+		$case ShortLE:
+		$case UIntLE:
+		$case IntLE:
+		$case ULongLE:
+		$case LongLE:
+		$case UInt128LE:
+		$case Int128LE:
+		$case UShortBE:
+		$case ShortBE:
+		$case UIntBE:
+		$case IntBE:
+		$case ULongBE:
+		$case LongBE:
+		$case UInt128BE:
+		$case Int128BE:
+			return true;
+		$default:
+			return false;
 	$endswitch
 }
 
-macro bool is_array_or_slice_of_char(bytes)
+macro bool is_array_or_slice_of_char(bytes) @deprecated("Use @is_array_or_slice_of_char")
 {
-	$switch @typekind(bytes):
-	$case POINTER:
-		var $Inner = $typefrom($typeof(bytes).inner);
-		$if $Inner.kindof == ARRAY:
-			var $Inner2 = $typefrom($Inner.inner);
-			return $Inner2.typeid == char.typeid;
-		$endif
-	$case ARRAY:
-	$case SLICE:
-		var $Inner = $typefrom($typeof(bytes).inner);
-		return $Inner.typeid == char.typeid;
-	$default:
-		return false;
+	return @is_array_or_slice_of_char(bytes);
+}
+
+macro bool @is_array_or_slice_of_char(#bytes) @const
+{
+    var $Type = $typeof(#bytes);
+	$switch $Type.kindof:
+		$case POINTER:
+			typeid $inner = $Type.inner;
+			return $inner.kindof == ARRAY &&& $inner.inner == char.typeid;
+		$case ARRAY:
+		$case SLICE:
+			return $Type.inner == char.typeid;
+		$default:
+			return false;
 	$endswitch
 }
 
-macro bool is_arrayptr_or_slice_of_char(bytes)
+macro bool is_arrayptr_or_slice_of_char(bytes) @deprecated("Use @is_arrayptr_or_slice_of_char")
 {
-	$switch @typekind(bytes):
-	$case POINTER:
-		var $Inner = $typefrom($typeof(bytes).inner);
-		$if $Inner.kindof == ARRAY:
-			var $Inner2 = $typefrom($Inner.inner);
-			return $Inner2.typeid == char.typeid;
-		$endif
-	$case SLICE:
-		var $Inner = $typefrom($typeof(bytes).inner);
-		return $Inner.typeid == char.typeid;
-	$default:
-		return false;
+	return @is_arrayptr_or_slice_of_char(bytes);
+}
+
+macro bool @is_arrayptr_or_slice_of_char(#bytes) @const
+{
+	var $Type = $typeof(#bytes);
+	$switch $Type.kindof:
+		$case POINTER:
+			typeid $inner = $Type.inner;
+			return $inner.kindof == ARRAY &&& $inner.inner == char.typeid;
+		$case SLICE:
+			return $Type.inner == char.typeid;
+		$default:
+			return false;
 	$endswitch
 }

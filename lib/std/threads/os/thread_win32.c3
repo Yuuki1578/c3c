@@ -15,6 +15,11 @@ struct NativeMutex
 	}
 }
 
+fn bool NativeMutex.is_initialized(&self)
+{
+	return self.initialized;
+}
+
 struct NativeTimedMutex
 {
 	Win32_SRWLOCK srw_lock;
@@ -198,7 +203,7 @@ fn void? NativeTimedMutex.lock_timeout(&mtx, ulong ms)
 
 	NanoDuration duration = time::ms(ms).to_nano();
 	Clock start = clock::now();
-	for (NanoDuration remaining = duration; remaining > 0; remaining = duration - start.to_now())
+	for (NanoDuration remaining = duration; remaining > time::NANO_DURATION_ZERO; remaining = duration - start.to_now())
 	{
 		ulong remaining_ms = remaining.to_ms();
 		if (remaining_ms > uint.max) remaining_ms = uint.max;
@@ -311,11 +316,34 @@ fn void? NativeConditionVariable.wait(&cond, NativeMutex* mtx) @inline
 
 <*
  @require mtx.initialized : "Mutex was not initialized"
+  @return? thread::WAIT_TIMEOUT, thread::WAIT_FAILED
 *>
 fn void? NativeConditionVariable.wait_timeout(&cond, NativeMutex* mtx, ulong ms) @inline
 {
 	if (ms > uint.max) ms = uint.max;
 	return timedwait(cond, mtx, (uint)ms) @inline;
+}
+
+<*
+ @require mtx.initialized : "Mutex was not initialized"
+  @return? thread::WAIT_TIMEOUT, thread::WAIT_FAILED
+*>
+fn void? NativeConditionVariable.wait_timeout_duration(&cond, NativeMutex* mtx, Duration duration) @inline
+{
+	if (duration < time::DURATION_ZERO) return thread::WAIT_TIMEOUT?;
+	long ms = duration.to_ms();
+	if (ms > uint.max) ms = uint.max;
+	return timedwait(cond, mtx, (uint)ms) @inline;
+}
+
+<*
+ @require mtx.initialized : "Mutex was not initialized"
+  @return? thread::WAIT_TIMEOUT, thread::WAIT_FAILED
+*>
+fn void? NativeConditionVariable.wait_until(&cond, NativeMutex* mtx, Time time) @inline
+{
+	Duration duration = time - time::now();
+	return cond.wait_timeout_duration(mtx, duration);
 }
 
 fn void? NativeThread.create(&thread, ThreadFn func, void* args)

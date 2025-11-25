@@ -13,7 +13,7 @@ const Allocator LIST_HEAP_ALLOCATOR = (Allocator)&dummy;
 
 const List ONHEAP = { .allocator = LIST_HEAP_ALLOCATOR };
 
-macro type_is_overaligned() => Type.alignof > mem::DEFAULT_MEM_ALIGNMENT;
+macro bool type_is_overaligned() => Type.alignof > mem::DEFAULT_MEM_ALIGNMENT;
 
 struct List (Printable)
 {
@@ -57,7 +57,7 @@ fn List* List.tinit(&self, usz initial_capacity = 16)
 fn List* List.init_with_array(&self, Allocator allocator, Type[] values)
 {
 	self.init(allocator, values.len) @inline;
-	self.add_array(values) @inline;
+	self.push_all(values) @inline;
 	return self;
 }
 
@@ -70,7 +70,7 @@ fn List* List.init_with_array(&self, Allocator allocator, Type[] values)
 fn List* List.tinit_with_array(&self, Type[] values)
 {
 	self.tinit(values.len) @inline;
-	self.add_array(values) @inline;
+	self.push_all(values) @inline;
 	return self;
 }
 
@@ -137,9 +137,10 @@ fn Type? List.pop_first(&self)
 *>
 fn void List.remove_at(&self, usz index)
 {
-	self.set_size(self.size - 1);
-	if (!self.size || index == self.size) return;
-	self.entries[index .. self.size - 1] = self.entries[index + 1 .. self.size];
+	usz new_size = self.size - 1;
+	defer self.set_size(new_size);
+	if (!new_size || index == new_size) return;
+	self.entries[index .. new_size - 1] = self.entries[index + 1 .. new_size];
 }
 
 fn void List.add_all(&self, List* other_list)
@@ -198,7 +199,21 @@ fn Type[] List.array_view(&self)
  @param [in] array
  @ensure self.size >= array.len
 *>
-fn void List.add_array(&self, Type[] array)
+fn void List.add_array(&self, Type[] array) @deprecated("Use push_all")
+{
+	if (!array.len) return;
+	self.reserve(array.len);
+	usz index = self.set_size(self.size + array.len);
+	self.entries[index : array.len] = array[..];
+}
+
+<*
+ Add the values of an array to this list.
+
+ @param [in] array
+ @ensure self.size >= array.len
+*>
+fn void List.push_all(&self, Type[] array)
 {
 	if (!array.len) return;
 	self.reserve(array.len);
@@ -517,7 +532,8 @@ fn bool List.remove_first_item(&self, Type value) @if(ELEMENT_IS_EQUATABLE)
 fn usz List.remove_item(&self, Type value) @if(ELEMENT_IS_EQUATABLE)
 {
 	usz old_size = self.size;
-	defer {
+	defer
+	{
 		if (old_size != self.size) self._update_size_change(old_size, self.size);
 	}
 	return list_common::list_remove_item(self, value);

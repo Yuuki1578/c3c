@@ -3,6 +3,7 @@
 // a copy of which can be found in the LICENSE file.
 
 #include "sema_internal.h"
+#include "compiler_tests/benchmark.h"
 
 void parent_path(StringSlice *slice)
 {
@@ -58,7 +59,6 @@ void sema_analyse_pass_module_hierarchy(Module *module)
 	sema_analyze_stage(parent_module, ANALYSIS_MODULE_HIERARCHY);
 }
 
-
 void sema_analysis_pass_process_imports(Module *module)
 {
 	DEBUG_LOG("Pass: Importing dependencies for files in module '%s'.", module->name->module);
@@ -98,6 +98,12 @@ void sema_analysis_pass_process_imports(Module *module)
 			// 5. Do we find it?
 			if (!import_module)
 			{
+				if (unit->if_attr)
+				{
+					unit->error_import = import;
+					import_module = compiler_find_or_create_module(path, NULL);
+					goto FOUND_MODULE;
+				}
 				PRINT_ERROR_AT(import, "No module named '%s' could be found, did you type the name right?", path->module);
 				decl_poison(import);
 				continue;
@@ -111,10 +117,45 @@ void sema_analysis_pass_process_imports(Module *module)
 				continue;
 			}
 
+FOUND_MODULE:
 			// 7. Assign the module.
 			DEBUG_LOG("* Import of %s.", path->module);
 			import->import.module = import_module;
 NEXT:;
+		}
+		FOREACH_IDX(idx, Decl *, alias_module,  unit->module_aliases)
+		{
+			Path *path = alias_module->module_alias_decl.alias_path;
+			Module *import_module = global_context_find_module(path->module);
+
+			// 5. Do we find it?
+			if (!import_module)
+			{
+				if (unit->if_attr)
+				{
+					unit->error_import = alias_module;
+					import_module = compiler_find_or_create_module(path, NULL);
+					goto FOUND_ALIAS;
+				}
+				PRINT_ERROR_AT(path, "No module named '%s' could be found, did you type the name right?", path->module);
+				continue;
+			}
+FOUND_ALIAS:
+			alias_module->module_alias_decl.module = import_module;
+			alias_module->resolve_status = RESOLVE_DONE;
+			for (unsigned i = 0; i < idx; i++)
+			{
+				if (unit->module_aliases[i]->name == alias_module->name)
+				{
+					PRINT_ERROR_AT(alias_module, "The module alias must be unique.");
+					break;
+				}
+			}
+			if (alias_module->attributes)
+			{
+				PRINT_ERROR_AT(alias_module->attributes[0], "Module aliases cannot have attributes.");
+				break;
+			}
 		}
 		total_import_count += import_count;
 	}
@@ -201,7 +242,7 @@ static bool exec_arg_append_to_scratch(Expr *arg)
 			scratch_buffer_append(arg->const_expr.global_ref->name);
 			return true;
 		case CONST_FAULT:
-			scratch_buffer_append(arg->const_expr.fault->name);
+			scratch_buffer_append(arg->const_expr.fault ? arg->const_expr.fault->name : "null");
 		return true;
 		case CONST_ENUM:
 			scratch_buffer_append(arg->const_expr.enum_val->name);
@@ -232,6 +273,7 @@ static bool exec_arg_append_to_scratch(Expr *arg)
 
 static Decl **sema_run_exec(CompilationUnit *unit, Decl *decl)
 {
+	double bench = bench_mark();
 	if (compiler.build.trust_level < TRUST_FULL)
 	{
 		RETURN_PRINT_ERROR_AT(NULL, decl, "'$exec' not permitted, trust level must be set to '--trust=full' to permit it.");
@@ -311,6 +353,7 @@ static Decl **sema_run_exec(CompilationUnit *unit, Decl *decl)
 	{
 		RETURN_PRINT_ERROR_AT(NULL, decl, "This $include would cause the maximum number of includes (%d) to be exceeded.", MAX_INCLUDE_DIRECTIVES);
 	}
+	compiler.exec_time += bench_mark() - bench;
 	return parse_include_file(file, unit);
 }
 
@@ -328,7 +371,7 @@ INLINE void register_includes(CompilationUnit *unit, Decl **decls)
 				include_decls = sema_load_include(unit, include);
 				break;
 			default:
-				UNREACHABLE
+				UNREACHABLE_VOID
 		}
 		FOREACH(Decl *, decl, include_decls)
 		{
@@ -464,13 +507,13 @@ CHECK_LINK:
 			unsigned args = vec_size(exprs);
 			ASSERT(args > 0 && "Should already have been checked.");
 			Expr *cond = args > 1 ? attr->exprs[0] : NULL;
-			if (cond && !sema_analyse_expr(&context, cond)) goto FAIL_CONTEXT;
+			if (cond && !sema_analyse_expr_rvalue(&context, cond)) goto FAIL_CONTEXT;
 			bool start = cond && expr_is_const_bool(cond) ? 1 : 0;
 			bool add = start == 0 ? true : cond->const_expr.b;
 			for (unsigned i = start; i < args; i++)
 			{
 				Expr *string = attr->exprs[i];
-				if (!sema_analyse_expr(&context, string)) goto FAIL_CONTEXT;
+				if (!sema_analyse_expr_rvalue(&context, string)) goto FAIL_CONTEXT;
 				if (!expr_is_const_string(string))
 				{
 					PRINT_ERROR_AT(string, "Expected a constant string here, usage is: "
@@ -485,6 +528,21 @@ CHECK_LINK:
 		}
 RELEASE_CONTEXT:
 		sema_context_destroy(&context);
+		if (unit->error_import)
+		{
+			Decl *import = unit->error_import;
+			switch (import->decl_kind)
+			{
+				case DECL_IMPORT:
+					PRINT_ERROR_AT(import, "No module named '%s' could be found, did you type the name right?", import->import.path->module);
+					continue;
+				case DECL_ALIAS_PATH:
+					PRINT_ERROR_AT(import->module_alias_decl.alias_path, "No module named '%s' could be found, did you type the name right?", import->module_alias_decl.alias_path->module);
+					continue;
+				default:
+					UNREACHABLE_VOID;
+			}
+		}
 		register_global_decls(unit, unit->global_decls);
 		// There may be includes, add those.
 		sema_process_includes(unit);
@@ -595,10 +653,10 @@ INLINE void sema_analyse_inner_func_ptr(SemaContext *c, Decl *decl)
 	Type *inner;
 	switch (decl->decl_kind)
 	{
-		case DECL_DISTINCT:
+		case DECL_TYPEDEF:
 			inner = decl->distinct->type;
 			break;
-		case DECL_TYPEDEF:
+		case DECL_TYPE_ALIAS:
 			inner = decl->type->canonical;
 			break;
 		default:
@@ -629,7 +687,6 @@ void sema_analysis_pass_decls(Module *module)
 		context.active_scope = (DynamicScope)
 				{
 					.depth = 0,
-					.scope_id = 0,
 					.label_start = 0,
 					.current_local = 0,
 				};
@@ -722,7 +779,7 @@ static bool sema_check_interface(SemaContext *context, Decl *decl, TypeInfo *int
 static inline bool sema_check_interfaces(SemaContext *context, Decl *decl)
 {
 	Decl **store = sema_decl_stack_store();
-	FOREACH(Decl *, method, decl->methods) sema_decl_stack_push(method);
+	sema_add_methods_to_decl_stack(context, decl);
 	FOREACH(TypeInfo *, interface_type, decl->interfaces)
 	{
 		if (!sema_check_interface(context, decl, interface_type, interface_type))
@@ -747,7 +804,7 @@ void sema_analysis_pass_interface(Module *module)
 		{
 			switch (decl->decl_kind)
 			{
-				case DECL_DISTINCT:
+				case DECL_TYPEDEF:
 				case DECL_STRUCT:
 				case DECL_UNION:
 				case DECL_ENUM:

@@ -11,7 +11,7 @@ static inline bool sema_resolve_type(SemaContext *context, TypeInfo *type_info, 
 static bool sema_resolve_type_identifier(SemaContext *context, TypeInfo *type_info, ResolveTypeKind resolve_type_kind);
 INLINE bool sema_resolve_vatype(SemaContext *context, TypeInfo *type_info);
 INLINE bool sema_resolve_evaltype(SemaContext *context, TypeInfo *type_info, ResolveTypeKind resolve_kind);
-INLINE bool sema_resolve_typefrom(SemaContext *context, TypeInfo *type_info);
+INLINE bool sema_resolve_typefrom(SemaContext *context, TypeInfo *type_info, ResolveTypeKind resolve_kind);
 INLINE bool sema_resolve_typeof(SemaContext *context, TypeInfo *type_info);
 static int compare_function(Signature *sig, FunctionPrototype *proto);
 
@@ -39,7 +39,7 @@ bool sema_resolve_array_like_len(SemaContext *context, TypeInfo *type_info, Arra
 	Expr *len_expr = type_info->array.len;
 
 	// Analyse it.
-	if (!sema_analyse_expr(context, len_expr)) return type_info_poison(type_info);
+	if (!sema_analyse_expr_rvalue(context, len_expr)) return type_info_poison(type_info);
 
 	if (!cast_to_index_len(context, len_expr, true)) return type_info_poison(type_info);
 
@@ -85,13 +85,9 @@ bool sema_resolve_array_like_len(SemaContext *context, TypeInfo *type_info, Arra
 	{
 		if (is_vector)
 		{
-			SEMA_ERROR(len_expr, "A vector may not exceed %d in bit width.", compiler.build.max_vector_size);
+			RETURN_VAL_SEMA_ERROR(type_info_poison(type_info), len_expr, "A vector may not exceed %d in bit width.", compiler.build.max_vector_size);
 		}
-		else
-		{
-			SEMA_ERROR(len_expr, "The array length may not exceed %lld.", MAX_ARRAY_SIZE);
-		}
-		return type_info_poison(type_info);
+		RETURN_VAL_SEMA_ERROR(type_info_poison(type_info), len_expr, "The array length may not exceed %lld.", MAX_ARRAY_SIZE);
 	}
 	// We're done, return the size and mark it as a success.
 	*len_ref = (ArraySize)len.i.low;
@@ -153,7 +149,8 @@ static inline bool sema_check_array_type(SemaContext *context, TypeInfo *origina
 			{
 				RETURN_SEMA_ERROR(original_info, "You cannot form a vector with elements of type %s.", type_quoted_error_string(base));
 			}
-			*result_ref = type_get_vector(base, len);
+			if (original_info->is_simd && !is_power_of_two(len)) RETURN_SEMA_ERROR(original_info, "The length of a @simd vector must be a power of two.");
+			*result_ref = type_get_vector(base, original_info->is_simd ? TYPE_SIMD_VECTOR : TYPE_VECTOR, len);
 			break;
 		case TYPE_INFO_ARRAY:
 			if (!type_is_valid_for_array(base))
@@ -235,7 +232,8 @@ static bool sema_resolve_type_identifier(SemaContext *context, TypeInfo *type_in
 			type_info->type = decl->type;
 			type_info->resolve_status = RESOLVE_DONE;
 			return true;
-		case DECL_DISTINCT:
+		case DECL_CONST_ENUM:
+		case DECL_TYPEDEF:
 			if (resolve_type_kind & RESOLVE_TYPE_NO_CHECK_DISTINCT)
 			{
 				type_info->type = decl->type;
@@ -243,10 +241,10 @@ static bool sema_resolve_type_identifier(SemaContext *context, TypeInfo *type_in
 				return true;
 			}
 			FALLTHROUGH;
-		case DECL_TYPEDEF:
+		case DECL_TYPE_ALIAS:
 			if (!sema_analyse_decl(context, decl)) return type_info_poison(type_info);
 			type_info->type = decl->type;
-			assert (type_info->type->canonical->type_kind != TYPE_TYPEDEF);
+			assert (type_info->type->canonical->type_kind != TYPE_ALIAS);
 			type_info->resolve_status = RESOLVE_DONE;
 			return true;
 		case DECL_POISONED:
@@ -255,33 +253,38 @@ static bool sema_resolve_type_identifier(SemaContext *context, TypeInfo *type_in
 			if (decl->var.kind == VARDECL_PARAM_CT_TYPE || decl->var.kind == VARDECL_LOCAL_CT_TYPE)
 			{
 				decl->var.is_read = true;
-				if (!decl->var.init_expr)
+				Expr *init_expr = decl->var.init_expr;
+				if (!init_expr)
 				{
-					SEMA_ERROR(type_info, "You need to assign a type to '%s' before using it.", decl->name);
-					return false;
+					if (decl_is_defaulted_var(decl))
+					{
+						RETURN_SEMA_ERROR(type_info, "The parameter '%s' was not provided by the caller.", decl->name);
+					}
+					RETURN_SEMA_ERROR(type_info, "You need to assign a type to '%s' before using it.", decl->name);
 				}
-				ASSERT(decl->var.init_expr->expr_kind == EXPR_TYPEINFO);
-				ASSERT(decl->var.init_expr->resolve_status == RESOLVE_DONE);
-				*type_info = *decl->var.init_expr->type_expr;
+				ASSERT_SPAN(init_expr, expr_is_const_typeid(init_expr));
+				ASSERT_SPAN(init_expr, init_expr->resolve_status == RESOLVE_DONE);
+				type_info->type = init_expr->const_expr.typeid;
 				return true;
 			}
 			FALLTHROUGH;
 		case DECL_ALIAS:
-		case DECL_FUNC:
-		case DECL_ENUM_CONSTANT:
-		case DECL_IMPORT:
-		case DECL_MACRO:
-		case DECL_LABEL:
+		case DECL_ALIAS_PATH:
 		case DECL_ATTRIBUTE:
+		case DECL_ENUM_CONSTANT:
 		case DECL_FAULT:
+		case DECL_FUNC:
+		case DECL_IMPORT:
+		case DECL_LABEL:
+		case DECL_MACRO:
 			SEMA_ERROR(type_info, "This is not a type.");
 			return type_info_poison(type_info);
+		case DECL_BODYPARAM:
 		case DECL_CT_ASSERT:
 		case DECL_CT_ECHO:
-		case DECL_DECLARRAY:
-		case DECL_BODYPARAM:
-		case DECL_CT_INCLUDE:
 		case DECL_CT_EXEC:
+		case DECL_CT_INCLUDE:
+		case DECL_DECLARRAY:
 		case DECL_GROUP:
 			UNREACHABLE
 	}
@@ -293,9 +296,10 @@ static bool sema_resolve_type_identifier(SemaContext *context, TypeInfo *type_in
 // $evaltype("Foo")
 INLINE bool sema_resolve_evaltype(SemaContext *context, TypeInfo *type_info, ResolveTypeKind resolve_kind)
 {
+	SEMA_DEPRECATED(type_info, "$evaltype is deprecated, use $typefrom instead.");
 	Expr *expr = type_info->unresolved_type_expr;
 	Expr *inner = sema_ct_eval_expr(context, true, expr, true);
-	if (!inner) return type_info_poison(type_info);
+	if (!inner || !expr_ok(inner)) return type_info_poison(type_info);
 	if (inner->expr_kind != EXPR_TYPEINFO)
 	{
 		SEMA_ERROR(expr, "Only type names may be resolved with $evaltype.");
@@ -326,7 +330,7 @@ INLINE bool sema_resolve_typeof(SemaContext *context, TypeInfo *type_info)
 	Expr *expr = type_info->unresolved_type_expr;
 	bool in_no_eval = context->call_env.in_no_eval;
 	context->call_env.in_no_eval = true;
-	bool success = sema_analyse_expr_value(context, expr);
+	bool success = sema_analyse_expr(context, expr);
 	context->call_env.in_no_eval = in_no_eval;
 	if (!success) return false;
 	Type *expr_type = expr->type;
@@ -338,6 +342,7 @@ INLINE bool sema_resolve_typeof(SemaContext *context, TypeInfo *type_info)
 		case STORAGE_NORMAL:
 		case STORAGE_VOID:
 		case STORAGE_UNKNOWN:
+		case STORAGE_COMPILE_TIME:
 			type_info->type = expr_type;
 			return true;
 		case STORAGE_WILDCARD:
@@ -347,33 +352,65 @@ INLINE bool sema_resolve_typeof(SemaContext *context, TypeInfo *type_info)
 				return true;
 			}
 			RETURN_SEMA_ERROR(expr, "This %sexpression lacks a concrete type.", type_is_optional(expr_type) ? "optional " : "");
-		case STORAGE_COMPILE_TIME:
-			RETURN_SEMA_ERROR(expr, "This expression has a compile time type %s.", type_quoted_error_string(expr_type));
 	}
 	UNREACHABLE
 }
 
-INLINE bool sema_resolve_typefrom(SemaContext *context, TypeInfo *type_info)
+INLINE bool sema_resolve_typefrom(SemaContext *context, TypeInfo *type_info, ResolveTypeKind resolve_kind)
 {
 	Expr *expr = type_info->unresolved_type_expr;
-	if (!sema_analyse_expr(context, expr)) return false;
-	if (!sema_cast_const(expr) || expr->const_expr.const_kind != CONST_TYPEID)
+	if (!sema_analyse_expr_rvalue(context, expr)) return false;
+	if (!sema_cast_const(expr))
 	{
-		RETURN_SEMA_ERROR(expr, "Expected a constant typeid value.");
+		RETURN_SEMA_ERROR(expr, "Expected a constant value.");
 	}
-	type_info->type = expr->const_expr.typeid;
-	return true;
+	switch (expr->const_expr.const_kind)
+	{
+		case CONST_TYPEID:
+			type_info->type = expr->const_expr.typeid;
+			return true;
+		case CONST_STRING:
+			break;
+		default:
+			RETURN_SEMA_ERROR(expr, "Expected a constant string or typeid value.");
+	}
+
+	const char *bytes = expr->const_expr.bytes.ptr;
+	ArraySize len = expr->const_expr.bytes.len;
+	Expr *typefrom = sema_resolve_string_ident(context, expr, true);
+	if (!typefrom || !expr_ok(typefrom)) return false;
+	if (typefrom->expr_kind != EXPR_TYPEINFO)
+	{
+		RETURN_SEMA_ERROR(expr, "Expected a type, not a regular identifier '%.*s'.", (int)len, bytes);
+	}
+	TypeInfo *info = typefrom->type_expr;
+	if (!sema_resolve_type(context, info, resolve_kind)) return false;
+	switch (sema_resolve_storage_type(context, info->type))
+	{
+		case STORAGE_ERROR:
+			return false;
+		case STORAGE_VOID:
+		case STORAGE_UNKNOWN:
+		case STORAGE_NORMAL:
+			type_info->type = info->type;
+			return true;
+		case STORAGE_WILDCARD:
+			RETURN_SEMA_ERROR(expr, "$typefrom failed to resolve \"%.*s\" to a definite type.", (int)len, bytes);
+		case STORAGE_COMPILE_TIME:
+			RETURN_SEMA_ERROR(expr, "$typefrom does not support compile-time types.");
+	}
+	UNREACHABLE
 }
 
 // $vatype(...)
 INLINE bool sema_resolve_vatype(SemaContext *context, TypeInfo *type_info)
 {
-	if (!context->current_macro)
+	if (!context->macro_has_vaargs)
 	{
-		RETURN_SEMA_ERROR(type_info, "'%s' can only be used inside of a macro.", token_type_to_string(TOKEN_CT_VATYPE));
+		RETURN_SEMA_ERROR(type_info, "'%s' can only be used inside of a macro with untyped vaargs.", token_type_to_string(TOKEN_CT_VATYPE));
 	}
 	ASSIGN_EXPR_OR_RET(Expr *arg_expr, sema_expr_analyse_ct_arg_index(context, type_info->unresolved_type_expr, NULL), false);
-	if (!sema_analyse_expr_value(context, arg_expr)) return false;
+	if (!sema_analyse_expr(context, arg_expr)) return false;
 	if (arg_expr->expr_kind != EXPR_TYPEINFO) RETURN_SEMA_ERROR(arg_expr, "The argument was not a type.");
 	type_info->type = arg_expr->type_expr->type;
 	return true;
@@ -388,10 +425,10 @@ bool sema_unresolved_type_is_generic(SemaContext *context, TypeInfo *type_info)
 	if (type_info->subtype != TYPE_COMPRESSED_NONE) return false;
 	Decl *decl = sema_find_path_symbol(context, type_info->unresolved.name, type_info->unresolved.path);
 	if (!decl) return false;
-	if (decl->decl_kind != DECL_TYPEDEF) return false;
+	if (decl->decl_kind != DECL_TYPE_ALIAS) return false;
 	if (decl->resolve_status == RESOLVE_DONE) return false;
-	if (decl->typedef_decl.is_func) return false;
-	type_info = decl->typedef_decl.type_info;
+	if (decl->type_alias_decl.is_func) return false;
+	type_info = decl->type_alias_decl.type_info;
 	goto RETRY;
 }
 
@@ -413,8 +450,14 @@ INLINE bool sema_resolve_generic_type(SemaContext *context, TypeInfo *type_info)
 	ASSERT_SPAN(inner, inner->resolve_status == RESOLVE_NOT_DONE);
 
 	bool was_recursive = false;
+	if (compiler.generic_depth >= MAX_GENERIC_DEPTH)
+	{
+		RETURN_SEMA_ERROR(type_info, "Generic resolution of this type has become deeply nested, it was aborted after reaching %d recursions.", compiler.generic_depth);
+	}
+	compiler.generic_depth++;
 	Decl *type = sema_analyse_parameterized_identifier(context, inner->unresolved.path, inner->unresolved.name,
-	                                                   inner->span, type_info->generic.params, &was_recursive);
+	                                                   inner->span, type_info->generic.params, &was_recursive, type_info->span);
+	compiler.generic_depth--;
 	if (!decl_ok(type)) return false;
 	if (!sema_analyse_decl(context, type)) return false;
 	type_info->type = type->type;
@@ -454,6 +497,19 @@ static inline bool sema_resolve_type(SemaContext *context, TypeInfo *type_info, 
 
 	type_info->resolve_status = RESOLVE_RUNNING;
 	TypeInfoCompressedKind kind = type_info->subtype;
+	switch (kind)
+	{
+		case TYPE_COMPRESSED_NONE:
+		case TYPE_COMPRESSED_PTR:
+		case TYPE_COMPRESSED_SUBPTR:
+		case TYPE_COMPRESSED_PTRPTR:
+		case TYPE_COMPRESSED_PTRSUB:
+			break;
+		case TYPE_COMPRESSED_SUB:
+		case TYPE_COMPRESSED_SUBSUB:
+			resolve_kind = resolve_kind & ~RESOLVE_TYPE_NO_CHECK_DISTINCT;
+			break;
+	}
 	switch (type_info->kind)
 	{
 		case TYPE_INFO_POISON:
@@ -476,7 +532,7 @@ static inline bool sema_resolve_type(SemaContext *context, TypeInfo *type_info, 
 			if (!sema_resolve_typeof(context, type_info)) return type_info_poison(type_info);
 			goto APPEND_QUALIFIERS;
 		case TYPE_INFO_TYPEFROM:
-			if (!sema_resolve_typefrom(context, type_info)) return type_info_poison(type_info);
+			if (!sema_resolve_typefrom(context, type_info, resolve_kind)) return type_info_poison(type_info);
 			goto APPEND_QUALIFIERS;
 		case TYPE_INFO_INFERRED_VECTOR:
 		case TYPE_INFO_INFERRED_ARRAY:
@@ -565,7 +621,7 @@ static Type *flatten_raw_function_type(Type *type)
 	Type *current;
 	switch (type->type_kind)
 	{
-		case TYPE_TYPEDEF:
+		case TYPE_ALIAS:
 			return flatten_raw_function_type(type->canonical);
 		case TYPE_FUNC_RAW:
 			return type->function.prototype->raw_type;
@@ -604,7 +660,9 @@ static Type *flatten_raw_function_type(Type *type)
 static uint32_t hash_function(Signature *sig)
 {
 	uintptr_t hash = sig->variadic == VARIADIC_RAW ? 0 : 1;
-	hash = hash * 31 + (uintptr_t)flatten_raw_function_type(type_infoptr(sig->rtype)->type);
+	Type *rtype = typeget(sig->rtype);
+	hash = hash * 31 + (uintptr_t)flatten_raw_function_type(rtype);
+	if (sig->attrs.is_simd && type_flat_is_vector(rtype)) hash++;
 	Decl **params = sig->params;
 	FOREACH(Decl *, param, params)
 	{
@@ -617,28 +675,11 @@ static inline Type *func_create_new_func_proto(Signature *sig, CallABI abi, uint
 {
 	unsigned param_count = vec_size(sig->params);
 	FunctionPrototype *proto = CALLOCS(FunctionPrototype);
-	proto->raw_variadic = sig->variadic == VARIADIC_RAW;
-	proto->vararg_index = sig->vararg_index;
 	Type *rtype = type_infoptr(sig->rtype)->type;
-	proto->rtype = rtype;
-	if (type_is_optional(rtype))
-	{
-		proto->is_optional = true;
-		Type *real_return_type = rtype->optional;
-		proto->ret_by_ref_type = rtype->optional;
-		proto->ret_by_ref = !type_is_void(real_return_type);
-		proto->abi_ret_type = type_fault;
-	}
-	else
-	{
-		proto->ret_by_ref_type = proto->abi_ret_type = rtype;
-	}
-	proto->call_abi = abi;
-
+	Decl **param_copy = NULL;
 	if (param_count)
 	{
-		Type **param_types = VECNEW(Type*, param_count);
-		Decl **param_copy = VECNEW(Decl*, param_count);
+		param_copy = VECNEW(Decl*, param_count);
 		for (unsigned i = 0; i < param_count; i++)
 		{
 			Decl *decl = decl_copy(sig->params[i]);
@@ -646,28 +687,25 @@ static inline Type *func_create_new_func_proto(Signature *sig, CallABI abi, uint
 			decl->var.type_info = 0;
 			decl->var.init_expr = NULL;
 			decl->name = NULL;
-			vec_add(param_types, decl->type);
 			vec_add(param_copy, decl);
 		}
-		proto->param_types = param_types;
-		proto->param_copy = param_copy;
 	}
 
 	scratch_buffer_clear();
 	scratch_buffer_append("fn ");
-	type_append_name_to_scratch(proto->rtype);
+	type_append_name_to_scratch(rtype->canonical);
 	scratch_buffer_append_char('(');
-	FOREACH_IDX(idx, Type *, val, proto->param_types)
+	FOREACH_IDX(idx, Decl *, val, sig->params)
 	{
 		if (idx != 0) scratch_buffer_append(", ");
-		type_append_name_to_scratch(val);
+		type_append_name_to_scratch(val->type->canonical);
 	}
 	scratch_buffer_append_char(')');
 	Type *type = type_new(TYPE_FUNC_RAW, scratch_buffer_interned());
 	Signature *copy_sig = CALLOCS(Signature);
 	*copy_sig = *sig;
 	copy_sig->attrs = (CalleeAttributes) { .nodiscard = false };
-	copy_sig->params = proto->param_copy;
+	copy_sig->params = param_copy;
 	proto->raw_type = type;
 	type->function.prototype = proto;
 	type->function.decl = NULL;
@@ -740,14 +778,15 @@ static int compare_function(Signature *sig, FunctionPrototype *proto)
 	bool is_raw_variadic = sig->variadic == VARIADIC_RAW;
 	if (is_raw_variadic != proto->raw_variadic) return -1;
 	Decl **params = sig->params;
-	Type **other_params = proto->param_types;
+	Signature *raw_sig = proto->raw_type->function.signature;
+	Decl **other_params = raw_sig->params;
 	unsigned param_count = vec_size(params);
 	if (param_count != vec_size(other_params)) return -1;
-	if (!compare_func_param(type_infoptr(sig->rtype)->type, proto->rtype)) return -1;
+	if (!compare_func_param(typeget(sig->rtype), typeget(proto->raw_type->function.signature->rtype))) return -1;
 	FOREACH_IDX(i, Decl *, param, params)
 	{
-		Type *other_param = other_params[i];
-		if (!compare_func_param(param->type, other_param->canonical)) return -1;
+		Type *other_param = other_params[i]->type;
+		if (!compare_func_param(param->type->canonical, other_param->canonical)) return -1;
 	}
 	return 0;
 }

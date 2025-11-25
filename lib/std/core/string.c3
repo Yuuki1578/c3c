@@ -1,5 +1,6 @@
 module std::core::string;
-import std::io;
+import std::io, std::ascii;
+
 
 typedef String @if(!$defined(String)) = inline char[];
 <*
@@ -78,6 +79,10 @@ macro Char16[] @char16(String $string) @builtin
 	return $$wstr16($string)[..^2];
 }
 
+macro String @sprintf(String $format, ...) @builtin @const
+{
+	return $$sprintf($format, $vasplat);
+}
 <*
  Return a temporary ZString created using the formatting function.
 
@@ -104,6 +109,28 @@ fn String format(Allocator allocator, String fmt, args...) @format(1) => @pool()
 }
 
 <*
+ Return a new String created using the formatting function, the resulting string must fit the buffer.
+
+ @param [inout] buffer : `The buffer to use`
+ @param [in] fmt : `The formatting string`
+*>
+fn String bformat(char[] buffer, String fmt, args...) @format(1)
+{
+	Formatter f;
+	OutputFn format_fn = fn void?(void* buf, char c) {
+		char[]* buffer_ref = buf;
+		char[] buffer = *buffer_ref;
+		if (buffer.len == 0) return io::BUFFER_EXCEEDED?;
+		buffer[0] = c;
+		*buffer_ref = buffer[1..];
+	};
+	char[] buffer_copy = buffer;
+	f.init(format_fn, &buffer_copy);
+	usz len = f.vprintf(fmt, args)!!;
+	return (String)buffer[:len];
+}
+
+<*
  Return a temporary String created using the formatting function.
 
  @param [in] fmt : `The formatting string`
@@ -119,7 +146,7 @@ fn String tformat(String fmt, args...) @format(0)
  Check if a character is in a set.
 
  @param c : `the character to check`
- @param [in] set : `The formatting string`
+ @param [in] set : `String containing the characters`
  @pure
  @return `True if a character is in the set`
 *>
@@ -168,7 +195,7 @@ fn String String.replace(self, Allocator allocator, String needle, String new_st
 	@pool()
 	{
 		String[] split = self.tsplit(needle);
-		return dstring::join(tmem, split, new_str).copy_str(mem);
+		return dstring::join(tmem, split, new_str).copy_str(allocator);
 	};
 }
 
@@ -195,9 +222,26 @@ fn String String.treplace(self, String needle, String new_str)
  @pure
  @return `a substring of the string passed in`
 *>
-fn String String.trim(self, String to_trim = "\t\n\r ")
+fn String String.trim(self, String to_trim = " \n\t\r\f\v")
 {
     return self.trim_left(to_trim).trim_right(to_trim);
+}
+
+<*
+ Remove characters from the front and end of a string.
+
+ @param [in] self : `The string to trim`
+ @param to_trim : `The set of characters to trim, defaults to whitespace`
+ @pure
+ @return `a substring of the string passed in`
+*>
+fn String String.trim_charset(self, AsciiCharset to_trim = ascii::WHITESPACE_SET)
+{
+	usz start = 0;
+	usz len = self.len;
+	while (start < len && to_trim.contains(self[start])) start++;
+	while (len > start && to_trim.contains(self[len - 1])) len--;
+    return self[start..len - 1];
 }
 
 <*
@@ -208,7 +252,7 @@ fn String String.trim(self, String to_trim = "\t\n\r ")
  @pure
  @return `a substring of the string passed in`
 *>
-fn String String.trim_left(self, String to_trim = "\t\n\r ")
+fn String String.trim_left(self, String to_trim = " \n\t\r\f\v")
 {
 	usz start = 0;
 	usz len = self.len;
@@ -225,7 +269,7 @@ fn String String.trim_left(self, String to_trim = "\t\n\r ")
  @pure
  @return `a substring of the string passed in`
 *>
-fn String String.trim_right(self, String to_trim = "\t\n\r ")
+fn String String.trim_right(self, String to_trim = " \n\t\r\f\v")
 {
 	usz len = self.len;
 	while (len > 0 && char_in_set(self[len - 1], to_trim)) len--;
@@ -409,6 +453,19 @@ fn bool String.contains(s, String substr)
 }
 
 <*
+ Check if a character is found in the string.
+
+ @param [in] s
+ @param character : "The character to look for."
+ @pure
+ @return "true if the string contains the character, false otherwise"
+*>
+fn bool String.contains_char(s, char character)
+{
+	return @ok(s.index_of_char(character));
+}
+
+<*
  Check how many non-overlapping instances of a substring there is.
 
  If the substring has zero length, the number of matches is zero.
@@ -573,6 +630,20 @@ fn usz? String.rindex_of(self, String substr)
 	return NOT_FOUND?;
 }
 
+fn bool ZString.eq(self, ZString other) @operator(==)
+{
+	char* a = self;
+	char* b = other;
+	if (a == b) return true;
+	if (!a || !b) return false;
+	for (;; a++, b++)
+	{
+		char c = *a;
+		if (c != *b) return false;
+		if (!c) return true;
+	}
+}
+
 fn String ZString.str_view(self)
 {
 	return (String)(self[:self.len()]);
@@ -591,12 +662,17 @@ fn usz ZString.char_len(str)
 
 fn usz ZString.len(self)
 {
-	usz len = 0;
-	char* ptr = (char*)self;
-	while (char c = ptr++[0]) len++;
+	usz len;
+	for (char* ptr = (char*)self; *ptr; ptr++) len++;
 	return len;
 }
 
+fn usz WString.len(self)
+{
+	usz len;
+	for (Char16* ptr = (Char16*)self; *ptr; ptr++) len++;
+	return len;
+}
 
 fn ZString String.zstr_copy(self, Allocator allocator)
 {
@@ -739,6 +815,92 @@ fn String String.to_upper_copy(self, Allocator allocator)
 	return copy;
 }
 
+fn String String.capitalize_copy(self, Allocator allocator)
+{
+	String s = self.copy(allocator);
+	if (s.len > 0 && s[0].is_lower())
+	{
+		s[0] &= (char)~0x20;
+	}
+	return s;
+}
+
+<*
+ Convert a string from `snake_case` to PascalCase.
+
+ @param [in] self
+ @return `"FooBar" from "foo_bar" the resulting pointer may safely be cast to ZString.`
+*>
+fn String String.snake_to_pascal_copy(self, Allocator allocator)
+{
+	Splitter splitter = self.tokenize("_");
+	char[] new_string = allocator::alloc_array(allocator, char, self.len + 1);
+	usz index = 0;
+	while (try s = splitter.next())
+	{
+		assert(s.len > 0);
+		char c = s[0];
+		if (c.is_lower()) c = c.to_upper();
+		new_string[index++] = c;
+		s = s[1..];
+		new_string[index:s.len] = s[..];
+		index += s.len;
+	}
+	new_string[index] = 0;
+	return (String)new_string[:index];
+}
+
+<*
+ Movifies the current string from `snake_case` to PascalCase.
+
+ @param [inout] self
+*>
+fn void String.convert_snake_to_pascal(&self)
+{
+	Splitter splitter = self.tokenize("_");
+	String new_string = *self;
+	usz index = 0;
+	while (try s = splitter.next())
+	{
+		assert(s.len > 0);
+		char c = s[0];
+		if (c.is_lower()) c = c.to_upper();
+		new_string[index++] = c;
+		s = s[1..];
+		new_string[index:s.len] = s[..];
+		index += s.len;
+	}
+	*self = new_string[:index];
+}
+
+<*
+ Convert a string from `PascalCase` to `snake_case`.
+
+ @param [in] self
+ @return `"foo_bar" from "FooBar" the resulting pointer may safely be cast to ZString.`
+*>
+fn String String.pascal_to_snake_copy(self, Allocator allocator) => @pool()
+{
+	DString d;
+	d.init(tmem, (usz)(self.len * 1.5));
+	usz index = 0;
+	foreach (i, c : self)
+	{
+		if (c.is_upper())
+		{
+			if (i > 0 && ((self[i - 1].is_lower() || self[i - 1].is_digit()) || (i < self.len - 1 && self[i + 1].is_lower())))
+            {
+                d.append_char('_');
+            }
+			d.append_char(c.to_lower());
+			continue;
+		}
+		d.append_char(c);
+	}
+	return d.copy_str(allocator);
+}
+
+
 fn StringIterator String.iterator(self)
 {
 	return { self, 0 };
@@ -803,7 +965,7 @@ fn usz String.utf8_codepoints(s)
  This function can safely be used with data pointing to null. However, it will not
  work correctly if the pointer is invalid, for example it is already freed.
 *>
-fn bool String.is_zstr(self)
+fn bool String.is_zstr(self) @deprecated("Unsafe, use copy instead")
 {
 	return self.ptr && *(self.ptr + self.len) == 0;
 }
@@ -824,9 +986,8 @@ fn bool String.is_zstr(self)
 
  @ensure return[self.len] == 0
 *>
-fn ZString String.quick_zstr(self)
+fn ZString String.quick_zstr(self) @deprecated("Unsafe, use zstr_tcopy instead")
 {
-	if (self.is_zstr() @inline) return (ZString)self.ptr;
 	return self.zstr_tcopy();
 }
 
@@ -906,14 +1067,10 @@ macro String.to_integer(self, $Type, int base = 10)
 		{
 			if (is_negative)
 			{
-				$Type new_value = value * base_used - c;
-				if (new_value > value) return INTEGER_OVERFLOW?;
-				value = new_value;
+				value = value.overflow_mul(base_used).overflow_sub(c) ?? INTEGER_OVERFLOW?!;
 				break;
 			}
-			$Type new_value = value * base_used + c;
-			if (new_value < value) return INTEGER_OVERFLOW?;
-			value = new_value;
+			value = value.overflow_mul(base_used).overflow_add(c) ?? INTEGER_OVERFLOW?!;
 		};
 	}
 	return value;

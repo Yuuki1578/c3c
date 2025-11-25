@@ -38,6 +38,7 @@ const char *attribute_list[NUMBER_OF_ATTRIBUTES];
 const char *builtin_list[NUMBER_OF_BUILTINS];
 const char *builtin_defines[NUMBER_OF_BUILTIN_DEFINES];
 const char *type_property_list[NUMBER_OF_TYPE_PROPERTIES];
+const char *kw_at_align;
 const char *kw_at_deprecated;
 const char *kw_at_ensure;
 const char *kw_at_enum_lookup;
@@ -46,6 +47,7 @@ const char *kw_at_param;
 const char *kw_at_pure;
 const char *kw_at_require;
 const char *kw_at_return;
+const char *kw_at_simd;
 const char *kw_in;
 const char *kw_inout;
 const char *kw_len;
@@ -184,6 +186,7 @@ void symtab_init(uint32_t capacity)
 	type_property_list[TYPE_PROPERTY_PARENTOF] = KW_DEF("parentof");
 	type_property_list[TYPE_PROPERTY_QNAMEOF] = KW_DEF("qnameof");
 	type_property_list[TYPE_PROPERTY_RETURNS] = KW_DEF("returns");
+	type_property_list[TYPE_PROPERTY_SET] = KW_DEF("set");
 	type_property_list[TYPE_PROPERTY_SIZEOF] = KW_DEF("sizeof");
 	type_property_list[TYPE_PROPERTY_TAGOF] = KW_DEF("tagof");
 	type_property_list[TYPE_PROPERTY_HAS_TAGOF] = KW_DEF("has_tagof");
@@ -223,6 +226,7 @@ void symtab_init(uint32_t capacity)
 	builtin_list[BUILTIN_EXP2] = KW_DEF("exp2");
 	builtin_list[BUILTIN_EXPECT] = KW_DEF("expect");
 	builtin_list[BUILTIN_EXPECT_WITH_PROBABILITY] = KW_DEF("expect_with_probability");
+	builtin_list[BUILTIN_FENCE] = KW_DEF("fence");
 	builtin_list[BUILTIN_FLOOR] = KW_DEF("floor");
 	builtin_list[BUILTIN_FMA] = KW_DEF("fma");
 	builtin_list[BUILTIN_FMULADD] = KW_DEF("fmuladd");
@@ -278,8 +282,12 @@ void symtab_init(uint32_t capacity)
 	builtin_list[BUILTIN_STR_UPPER] = KW_DEF("str_upper");
 	builtin_list[BUILTIN_STR_LOWER] = KW_DEF("str_lower");
 	builtin_list[BUILTIN_STR_FIND] = KW_DEF("str_find");
+	builtin_list[BUILTIN_STR_PASCALCASE] = KW_DEF("str_pascalcase");
+	builtin_list[BUILTIN_STR_SNAKECASE] = KW_DEF("str_snakecase");
+	builtin_list[BUILTIN_STR_REPLACE] = KW_DEF("str_replace");
 	builtin_list[BUILTIN_SWIZZLE] = KW_DEF("swizzle");
 	builtin_list[BUILTIN_SWIZZLE2] = KW_DEF("swizzle2");
+	builtin_list[BUILTIN_SPRINTF] = KW_DEF("sprintf");
 	builtin_list[BUILTIN_SQRT] = KW_DEF("sqrt");
 	builtin_list[BUILTIN_SYSCALL] = KW_DEF("syscall");
 	builtin_list[BUILTIN_SYSCLOCK] = KW_DEF("sysclock");
@@ -320,17 +328,21 @@ void symtab_init(uint32_t capacity)
 
 	kw_at_deprecated = KW_DEF("@deprecated");
 	kw_at_ensure = KW_DEF("@ensure");
-	kw_at_enum_lookup = KW_DEF("@enum_lookup");
+	kw_at_enum_lookup = KW_DEF("@enum_lookup_new");
 	kw_at_jump = KW_DEF("@jump");
+	kw_at_align = KW_DEF("@align");
+	kw_at_simd = KW_DEF("@simd");
 	kw_at_param = KW_DEF("@param");
 	kw_at_pure = KW_DEF("@pure");
 	kw_at_require = KW_DEF("@require");
 	kw_at_return = KW_DEF("@return");
-	attribute_list[ATTRIBUTE_ALIGN] = KW_DEF("@align");
+	attribute_list[ATTRIBUTE_ALIGN] = kw_at_align;
+	attribute_list[ATTRIBUTE_ALLOW_DEPRECATED] = KW_DEF("@allow_deprecated");
 	attribute_list[ATTRIBUTE_BENCHMARK] = KW_DEF("@benchmark");
 	attribute_list[ATTRIBUTE_BIGENDIAN] = KW_DEF("@bigendian");
 	attribute_list[ATTRIBUTE_BUILTIN] = KW_DEF("@builtin");
 	attribute_list[ATTRIBUTE_CALLCONV] = KW_DEF("@callconv");
+	attribute_list[ATTRIBUTE_CNAME] = KW_DEF("@cname");
 	attribute_list[ATTRIBUTE_COMPACT] = KW_DEF("@compact");
 	attribute_list[ATTRIBUTE_CONST] = KW_DEF("@const");
 	attribute_list[ATTRIBUTE_DEPRECATED] = KW_DEF("@deprecated");
@@ -368,8 +380,11 @@ void symtab_init(uint32_t capacity)
 	attribute_list[ATTRIBUTE_PURE] = kw_at_pure;
 	attribute_list[ATTRIBUTE_PUBLIC] = KW_DEF("@public");
 	attribute_list[ATTRIBUTE_REFLECT] = KW_DEF("@reflect");
+	attribute_list[ATTRIBUTE_SAFEINFER] = KW_DEF("@safeinfer");
 	attribute_list[ATTRIBUTE_SAFEMACRO] = KW_DEF("@safemacro");
 	attribute_list[ATTRIBUTE_SECTION] = KW_DEF("@section");
+	attribute_list[ATTRIBUTE_SIMD] = kw_at_simd;
+	attribute_list[ATTRIBUTE_STRUCTLIKE] = KW_DEF("@structlike");
 	attribute_list[ATTRIBUTE_TEST] = KW_DEF("@test");
 	attribute_list[ATTRIBUTE_TAG] = KW_DEF("@tag");
 	attribute_list[ATTRIBUTE_UNUSED] = KW_DEF("@unused");
@@ -578,6 +593,68 @@ void *htable_get(HTable *table, void *key)
 	do
 	{
 		if (entry->key == key) return entry->value;
+		entry = entry->next;
+	} while (entry);
+	return NULL;
+}
+
+void pathtable_init(PathTable *table, uint32_t initial_size)
+{
+	ASSERT(initial_size && "Size must be larger than 0");
+	size_t size = next_highest_power_of_2(initial_size);
+
+	size_t mem_size = initial_size * sizeof(PathTableEntry);
+	table->entries = calloc_arena(mem_size);
+
+	table->mask = size - 1;
+}
+
+void pathtable_set(PathTable *table, Decl *value)
+{
+	ASSERT(value && "Cannot insert NULL");
+	ASSERT_SPAN(value, value->name);
+	const char *short_path = value->unit->module->short_path;
+	const char *name = value->name;
+	uint32_t idx = ((((uintptr_t)short_path) ^ ((uintptr_t)short_path) >> 8) ^(((uintptr_t)name) ^ ((uintptr_t)name) >> 8)) & table->mask;
+	PathTableEntry **entry_ref = &table->entries[idx];
+	PathTableEntry *entry = *entry_ref;
+	if (!entry)
+	{
+		entry = CALLOCS(HTEntry);
+		entry->short_path = short_path;
+		entry->name = name;
+		entry->value = value;
+		*entry_ref = entry;
+		return;
+	}
+	PathTableEntry *first_entry = entry;
+	do
+	{
+		if (entry->short_path == short_path && entry->name == name)
+		{
+			entry->value = poisoned_decl;
+			return;
+		}
+		entry = entry->next;
+	} while (entry);
+
+	entry = CALLOCS(HTEntry);
+	entry->short_path = short_path;
+	entry->name = name;
+	entry->value = value;
+	entry->next = first_entry;
+	*entry_ref = entry;
+}
+
+
+Decl *pathtable_get(PathTable *table, const char *short_path, const char *name)
+{
+	uint32_t idx = ((((uintptr_t)short_path) ^ ((uintptr_t)short_path) >> 8) ^(((uintptr_t)name) ^ ((uintptr_t)name) >> 8)) & table->mask;
+	PathTableEntry *entry = table->entries[idx];
+	if (!entry) return NULL;
+	do
+	{
+		if (entry->short_path == short_path && entry->name == name) return entry->value;
 		entry = entry->next;
 	} while (entry);
 	return NULL;

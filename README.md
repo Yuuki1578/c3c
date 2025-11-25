@@ -15,6 +15,7 @@ Precompiled binaries for the following operating systems are available:
 - Debian x64 [download](https://github.com/c3lang/c3c/releases/download/latest-prerelease/c3-linux.tar.gz), [install instructions](#installing-on-debian-with-precompiled-binaries).
 - Ubuntu x86 [download](https://github.com/c3lang/c3c/releases/download/latest-prerelease/c3-ubuntu-20.tar.gz), [install instructions](#installing-on-ubuntu-with-precompiled-binaries).
 - MacOS Arm64 [download](https://github.com/c3lang/c3c/releases/download/latest-prerelease/c3-macos.zip), [install instructions](#installing-on-macos-with-precompiled-binaries).
+- OpenBSD x64 [download](https://github.com/c3lang/c3c/releases/download/latest-prerelease/c3-openbsd.tar.gz), [install instructions](#installing-on-openbsd-with-precompiled-binaries).
 
 The manual for C3 can be found at [www.c3-lang.org](http://www.c3-lang.org).
 
@@ -144,7 +145,7 @@ fn void main()
 
 ### Current status
 
-The current stable version of the compiler is **version 0.7.2**.
+The current stable version of the compiler is **version 0.7.7**.
 
 The upcoming 0.7.x releases will focus on expanding the standard library,
 fixing bugs and improving compile time analysis. 
@@ -153,7 +154,7 @@ Follow the issues [here](https://github.com/c3lang/c3c/issues).
 If you have suggestions on how to improve the language, either [file an issue](https://github.com/c3lang/c3c/issues) 
 or discuss C3 on its dedicated Discord: [https://discord.gg/qN76R87](https://discord.gg/qN76R87).
 
-The compiler is currently verified to compile on Linux, Windows and MacOS.
+The compiler is currently verified to compile on Linux, OpenBSD, Windows and MacOS.
 
 **Support matrix**
 
@@ -174,17 +175,21 @@ The compiler is currently verified to compile on Linux, Windows and MacOS.
 | ELF freestanding Aarch64 | No                            | Untested                | No          | No       | No       | Yes*       |
 | ELF freestanding Riscv64 | No                            | Untested                | No          | No       | No       | Untested   |
 | ELF freestanding Riscv32 | No                            | Untested                | No          | No       | No       | Untested   |
+| ELF freestanding Xtensa* | No                            | Untested                | No          | No       | No       | Untested   |
 | FreeBSD x86              | Untested                      | Untested                | No          | Yes      | Untested | Yes*       |
 | FreeBSD x64              | Untested                      | Untested                | No          | Yes      | Untested | Yes*       |
 | NetBSD x86               | Untested                      | Untested                | No          | Yes      | Untested | Yes*       |
 | NetBSD x64               | Untested                      | Untested                | No          | Yes      | Untested | Yes*       |
 | OpenBSD x86              | Untested                      | Untested                | No          | Yes      | Untested | Yes*       |
-| OpenBSD x64              | Untested                      | Untested                | No          | Yes      | Untested | Yes*       |
+| OpenBSD x64              | Yes*                          | Yes                     | Yes*        | Yes      | Untested | Yes*       |
 | MCU x86                  | No                            | Untested                | No          | No       | No       | Yes*       |
 | Wasm32                   | No                            | Yes                     | No          | No       | No       | No         |
 | Wasm64                   | No                            | Untested                | No          | No       | No       | No         |
 
-*\* Inline asm is still a work in progress*
+*\* Inline asm is still a work in progress*<br>
+*\* OpenBSD 7.7 is the only tested version*<br>
+*\* OpenBSD has limited stacktrace, needs to be tested further*<br>
+*\* Xtensa support is enabled by compiling with `-DXTENSA_ENABLE`. The [espressif llvm fork](https://github.com/espressif/llvm-project) is recommended for best compatibility*
 
 More platforms will be supported in the future.
 
@@ -209,11 +214,42 @@ This installs the latest prerelease build, as opposed to the latest released ver
 3. If you don't have Visual Studio 17 installed you can either do so, or run the `msvc_build_libraries.py` Python script which will download the necessary files to compile on Windows. 
 4. Run `c3c.exe`.
 
+#### Installing on Windows with the install script
+
+Open a PowerShell terminal (you may need to run it as an administrator) and run the following command:
+```bash
+iwr -useb https://raw.githubusercontent.com/c3lang/c3c/refs/heads/master/install/install.ps1 | iex
+```
+The script will inform you once the installation is successful and add the `~/.c3` directory to your PATH, which will allow you to run the c3c command from any location.
+
+You can choose another version with option `C3_VERSION`.
+For example, you can force the installation of the 0.7.4 version:
+```bash
+$env:C3_VERSION='0.7.4'; powershell -ExecutionPolicy Bypass -Command "iwr -useb https://raw.githubusercontent.com/c3lang/c3c/refs/heads/master/install/install.ps1 | iex"
+```
+
+If you don't have Visual Studio 17 installed you can either do so, or run the `msvc_build_libraries.py` Python script which will download the necessary files to compile on Windows.
+
+
 #### Installing on Debian with precompiled binaries
 1. Download tar file: [https://github.com/c3lang/c3c/releases/download/latest-prerelease/c3-linux.tar.gz](https://github.com/c3lang/c3c/releases/download/latest-prerelease/c3-linux.tar.gz)
    (debug version [here](https://github.com/c3lang/c3c/releases/download/latest-prerelease/c3-linux-debug.tar.gz))
 2. Unpack executable and standard lib.
 3. Run `./c3c`.
+
+#### Installing on Debian with the install script
+
+Open a terminal and run the following command:
+```bash
+curl -fsSL https://raw.githubusercontent.com/c3lang/c3c/refs/heads/master/install/install.sh | bash
+```
+The C3 compiler will be installed, and the script will also update your ~/.bashrc to include `~/.c3` in your PATH, allowing you to invoke the c3c command from anywhere. You might need to restart your terminal or source your shell for the changes to take effect.
+
+You can choose another version with option `C3_VERSION`.
+For example, you can force the installation of the 0.7.4 version:
+```bash
+curl -fsSL https://raw.githubusercontent.com/c3lang/c3c/refs/heads/master/install/install.sh | C3_VERSION=0.7.4 bash
+```
 
 #### Installing on Ubuntu with precompiled binaries
 1. Download tar file: [https://github.com/c3lang/c3c/releases/download/latest-prerelease/c3-ubuntu-20.tar.gz](https://github.com/c3lang/c3c/releases/download/latest-prerelease/c3-ubuntu-20.tar.gz)
@@ -229,6 +265,14 @@ This installs the latest prerelease build, as opposed to the latest released ver
 4. Run `./c3c`.
 
 (*Note that there is a known issue with debug symbol generation on MacOS 13, see [issue #1086](https://github.com/c3lang/c3c/issues/1086))
+
+#### Installing on OpenBSD with precompiled binaries
+1. Download tar file: [https://github.com/c3lang/c3c/releases/download/latest-prerelease/c3-openbsd.tar.gz](https://github.com/c3lang/c3c/releases/download/latest-prerelease/c3-openbsd.tar.gz)
+   (debug version [here](https://github.com/c3lang/c3c/releases/download/latest-prerelease/c3-openbsd-debug.tar.gz))
+2. Unpack executable and standard lib.
+3. Run `./c3c`.
+
+(*Note that this is specifically for OpenBSD 7.7, running it on any other version is prone to ABI breaks)
 
 #### Installing on Arch Linux
 Arch includes c3c in the official 'extra' repo. It can be easily installed the usual way:
@@ -256,6 +300,60 @@ cd c3c-git
 makepkg -si
 ```
 
+#### Installing via Nix
+
+You can access `c3c` via [flake.nix](./flake.nix), which will contain the latest commit of the compiler. To add `c3c` to your `flake.nix`, do the following:
+```nix
+{
+  inputs = {
+    nixpkgs.url = "github:nixos/nixpkgs?ref=nixpkgs-unstable";
+    flake-utils.url = "github:numtide/flake-utils";
+    c3c.url = "github:c3lang/c3c";
+    # Those are desired if you don't want to copy extra nixpkgs
+    c3c.inputs = {
+      nixpkgs.follows = "nixpkgs";
+      flake-utils.follows = "flake-utils";
+    };
+  };
+
+  outputs = { self, ... } @ inputs: inputs.flake-utils.lib.eachDefaultSystem (system: 
+    let 
+      pkgs = import inputs.nixpkgs { inherit system; };
+      c3c = inputs.c3c.packages.${system}.c3c;
+    in 
+    {
+      devShells.default = pkgs.mkShell {
+        buildInputs = [
+          pkgs.c3c
+        ];
+      };
+    }
+  );
+}
+```
+
+### Installing on Gentoo
+
+`c3c` is available in the [Gentoo GURU overlay](https://wiki.gentoo.org/wiki/Project:GURU).
+
+Enable and sync the GURU repository (if not already done):
+
+```sh
+sudo eselect repository enable guru
+sudo emaint sync -r guru
+```
+
+Install `c3c` with:
+
+```sh
+sudo emerge -av dev-lang/c3c
+```
+
+* The compiler binary is installed to `/usr/bin/c3c`.
+* The standard library is installed to `/usr/lib/c3`.
+
+For Gentoo-specific issues, please use the [Gentoo Bugzilla](https://bugs.gentoo.org/) (Product: *GURU*).
+
 #### Building via Docker
 
 You can build `c3c` using an Ubuntu container. By default, the script will build through Ubuntu 22.04. You can specify the version by passing the `UBUNTU_VERSION` environment variable.
@@ -268,14 +366,15 @@ See the `build-with-docker.sh` script for more information on other configurable
 
 #### Installing on OS X using Homebrew
 
-2. Install CMake: `brew install cmake`
-3. Install LLVM 17+: `brew install llvm`
-4. Clone the C3C github repository: `git clone https://github.com/c3lang/c3c.git`
-5. Enter the C3C directory `cd c3c`.
-6. Create a build directory `mkdir build`
-7. Change directory to the build directory `cd build`
-8. Set up CMake build for debug: `cmake ..`
-9. Build: `cmake --build .`
+1. Install [Homebrew](https://brew.sh/)
+2. Install LLVM 17+: `brew install llvm`
+3. Install lld: `brew install lld`
+4. Install CMake: `brew install cmake`
+5. Clone the C3C github repository: `git clone https://github.com/c3lang/c3c.git`
+6. Enter the C3C directory `cd c3c`.
+7. Set up CMake build for debug: `cmake -B build -S .`
+8. Build: `cmake --build build`
+9. Change directory to the build directory `cd build`
 
 #### Installing on Windows using Scoop
 
@@ -316,28 +415,35 @@ called `hello_world` or `hello_world.exe`depending on platform.
 1. Make sure you have Visual Studio 17 2022 installed or alternatively install the "Buildtools for Visual Studio" (https://aka.ms/vs/17/release/vs_BuildTools.exe) and then select "Desktop development with C++"
 2. Install CMake
 3. Clone the C3C github repository: `git clone https://github.com/c3lang/c3c.git`
-4. Enter the C3C directory `cd c3c`.
-5. Set up the CMake build `cmake -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release`
-6. Build: `cmake --build build --config Release`
-7. You should now have the c3c.exe
+4. Enter the C3C directory: `cd c3c`.
+5. Set up the CMake build: `cmake --preset windows-vs-2022-release`
+6. Build: `cmake --build --preset windows-vs-2022-release`
 
-You should now have a `c3c` executable.
+You should now have a `c3c` executable in `build\Release`.
 
-You can try it out by running some sample code: `c3c.exe compile ../resources/examples/hash.c3`
+You can try it out by running some sample code: `c3c.exe compile ../../resources/examples/hash.c3`
+
+Building `c3c` using Visual Studio Code is also supported when using the `CMake Tools` extension. Simply select the `Windows x64 Visual Studio 17 2022` configure preset and build.
 
 *Note that if you run into linking issues when building, make sure that you are using the latest version of VS17.*
 
+#### Compiling on Windows (Debug)
+
+Debug build requires a different set of LLVM libraries to be loaded for which a separate CMake configuration is used to avoid conflicts.
+1. Configure: `cmake --preset windows-vs-2022-debug`
+2. Build: `cmake --build --preset windows-vs-2022-debug`
+
+You should now have a `c3c` executable in `build-debug\Debug`.
 
 #### Compiling on Ubuntu 24.04 LTS
 
 1. Make sure you have a C compiler that handles C11 and a C++ compiler, such as GCC or Clang. Git also needs to be installed.
-2. Install LLVM 18 `sudo apt-get install cmake git clang zlib1g zlib1g-dev libllvm18 llvm llvm-dev llvm-runtime liblld-dev liblld-18 libpolly-18-dev`
+2. Install LLVM 18 `sudo apt-get install cmake git clang zlib1g zlib1g-dev libllvm18 llvm llvm-dev llvm-runtime liblld-dev liblld-18 libpolly-18-dev`. If you're using Ubuntu 25.04, also install `libpolly-20-dev`.
 3. Clone the C3C github repository: `git clone https://github.com/c3lang/c3c.git`
 4. Enter the C3C directory `cd c3c`.
-5. Create a build directory `mkdir build`
-6. Change directory to the build directory `cd build`
-7. Set up CMake build: `cmake ..`
-8. Build: `cmake --build .`
+5. Set up CMake build: `cmake -B build -S .`
+6. Build: `cmake --build build`
+7. Change directory to the build directory `cd build`
 
 You should now have a `c3c` executable.
 
@@ -350,13 +456,12 @@ You can try it out by running some sample code: `./c3c compile ../resources/exam
 2. Clone the C3C repository: `git clone https://github.com/c3lang/c3c.git`
     - If you only need the latest commit, you may want to make a shallow clone instead: `git clone https://github.com/c3lang/c3c.git --depth=1`
 3. Enter the directory: `cd c3c`
-4. Create a build directory: `mkdir build`
-5. Enter the build directory: `cd build`
-6. Create the CMake build cache: `cmake ..`
-7. Build: `cmake --build .`
+4. Create the CMake build cache: `cmake -B build -S .`
+5. Build: `cmake --build build`
+6. Enter the build directory: `cd build`
 
 Your c3c executable should have compiled properly. You may want to test it: `./c3c compile ../resources/examples/hash.c3`  
-For a sytem-wide installation, run the following as root: `cmake --install .`
+For a system-wide installation, run the following as root: `cmake --install .`
 
 
 #### Compiling on Fedora
@@ -366,12 +471,37 @@ For a sytem-wide installation, run the following as root: `cmake --install .`
 3. Clone the C3C repository: `git clone https://github.com/c3lang/c3c.git`
     - If you only need the latest commit, you may want to make a shallow clone: `git clone https://github.com/c3lang/c3c.git --depth=1`
 4. Enter the C3C directory: `cd c3c`
-5. Create a build directory and navigate into it: `mkdir build && cd build`
-6. Create the CMake build cache. The Fedora repositories provide `.so` libraries for lld, so you need to set the C3_LINK_DYNAMIC flag: `cmake .. -DC3_LINK_DYNAMIC=1`
-7. Build the project: `cmake --build .`
+5. Create the CMake build cache. The Fedora repositories provide `.so` libraries for lld, so you need to set the C3_LINK_DYNAMIC flag: `cmake -B build -S . -DC3_LINK_DYNAMIC=1`
+6. Build the project: `cmake --build build`
+7. Enter the build directory: `cd build`
 
 The c3c binary should be created in the build directory. You can try it out by running some sample code: `./c3c compile ../resources/examples/hash.c3`
 
+#### Compiling on Arch Linux
+
+1. Install required project dependencies: `sudo pacman -S curl lld llvm-libs clang cmake git libedit llvm libxml2`
+2. Clone the C3C repository: `git clone https://github.com/c3lang/c3c.git`
+    - If you only need the latest commit, you may want to make a shallow clone: `git clone https://github.com/c3lang/c3c.git --depth=1`
+3. Enter the C3C directory: `cd c3c`
+4. Create the CMake build cache:
+```bash
+cmake -B build \
+    -D C3_LINK_DYNAMIC=ON \
+    -D CMAKE_BUILD_TYPE=Release
+```
+5. Build the project: `cmake --build build`.
+
+After compilation, the `c3c` binary will be located in the `build` directory. You can test it by compiling an example: `./build/c3c compile resources/examples/ls.c3`.
+
+6. To install the compiler globally: `sudo cmake --install build`
+
+#### Compiling on NixOS
+
+1. Enter nix shell, by typing `nix develop` in root directory
+2. Configure cmake via `cmake . -Bbuild $=C3_CMAKE_FLAGS`. Note: passing `C3_CMAKE_FLAGS` is needed in due to generate `compile_commands.json` and find missing libs.
+4. Build it `cmake --build build`
+5. Test it out: `./build/c3c -V`
+6. If you use `clangd` lsp server for your editor, it is recommended to make a symbolic link to `compile_command.json` in the root: `ln -s ./build/compile_commands.json compile_commands.json`
 
 #### Compiling on other Linux / Unix variants
 
@@ -379,11 +509,10 @@ The c3c binary should be created in the build directory. You can try it out by r
 2. Install or compile LLVM and LLD *libraries* (version 17+ or higher)
 3. Clone the C3C github repository: `git clone https://github.com/c3lang/c3c.git`
 4. Enter the C3C directory `cd c3c`.
-5. Create a build directory `mkdir build`
-6. Change directory to the build directory `cd build`
-7. Set up CMake build for debug: `cmake ..`. At this point you may need to manually 
-provide the link path to the LLVM CMake directories, e.g. `cmake -DLLVM_DIR=/usr/local/opt/llvm/lib/cmake/llvm/ ..`
-8. Build: `cmake --build .`
+5. Set up CMake build for debug: `cmake -B build -S .`. At this point you may need to manually 
+provide the link path to the LLVM CMake directories, e.g. `cmake -B build -S . -DLLVM_DIR=/usr/local/opt/llvm/lib/cmake/llvm/`
+6. Build: `cmake --build build`
+7. Change directory to the build directory `cd build`
 
 *A note on compiling for Linux/Unix/MacOS: to be able to fetch vendor libraries
 libcurl is needed. The CMake script should detect it if it is available. Note that
@@ -391,8 +520,13 @@ this functionality is non-essential and it is perfectly fine to user the compile
 
 #### Licensing
 
-The C3 compiler is licensed under LGPL 3.0, the standard library itself is
-MIT licensed.
+Unless specified otherwise, the code in this repository is MIT licensed.
+The exception is the compiler source code (the source code under `src`),
+which is licensed under LGPL 3.0. 
+
+This means you are free to use all parts of standard library, 
+tests, benchmarks, grammar, examples and so on under the MIT license, including 
+using those libraries and tests if your build your own C3 compiler.
 
 #### Editor plugins
 
@@ -411,7 +545,12 @@ Editor plugins can be found at https://github.com/c3lang/editor-plugins.
 
 A huge **THANK YOU** goes out to all contributors and sponsors.
 
-A special thank you to sponsors [Caleb-o](https://github.com/Caleb-o) and [devdad](https://github.com/devdad) for going the extra mile.
+A special thank you to sponsors [Zack Puhl](https://github.com/NotsoanoNimus) and [konimarti](https://github.com/konimarti) for going the extra mile.
+
+And honorable mention goes to past sponsors:
+[Ygor Pontelo](https://github.com/ygorpontelo), [Simone Raimondi](https://github.com/SRaimondi),
+[Jan Válek](https://github.com/jan-valek), [Pierre Curto](https://github.com/pierrec), 
+[Caleb-o](https://github.com/Caleb-o) and [devdad](https://github.com/devdad)
 
 ## Star History
 

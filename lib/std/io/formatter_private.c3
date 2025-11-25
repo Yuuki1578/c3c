@@ -22,7 +22,7 @@ fn usz? print_hex_chars(Formatter* f, char[] out, bool uppercase) @inline
 	return len;
 }
 
-macro Formatter.first_err(&self, fault f)
+macro fault Formatter.first_err(&self, fault f)
 {
 	if (self.first_fault) return self.first_fault;
 	self.first_fault = f;
@@ -44,6 +44,7 @@ fn uint128? int_from_any(any arg, bool *is_neg) @private
 			*is_neg = false;
 			return (uint128)(uptr)*(void**)arg.ptr;
 		case DISTINCT:
+		case CONST_ENUM:
 			return int_from_any(arg.as_inner(), is_neg);
 		default:
 			break;
@@ -94,7 +95,7 @@ fn FloatType? float_from_any(any arg) @private
 	$if env::F128_SUPPORT:
 		if (arg.type == float128.typeid) return (FloatType)*((float128*)arg.ptr);
 	$endif
-	if (arg.type.kindof == TypeKind.DISTINCT)
+	if (arg.type.kindof == DISTINCT || arg.type.kindof == CONST_ENUM)
 	{
 		return float_from_any(arg.as_inner());
 	}
@@ -623,9 +624,12 @@ fn usz? Formatter.out_char(&self, any arg) @private
 		return self.out_substr("<NOT CHAR>");
 	}
 	usz len = 1;
-	uint l = 1;
 	// pre padding
-	len += self.adjust(l)!;
+	if (!self.flags.left)
+    {
+    	len += self.pad(' ', self.width, len)!;
+    }
+
 	// char output
 	Char32 c = types::any_to_int(arg, uint) ?? 0xFFFD;
 	switch (true)
@@ -645,7 +649,10 @@ fn usz? Formatter.out_char(&self, any arg) @private
 			self.out((char)(0x80 | (c >> 6 & 0x3F)))!;
 			self.out((char)(0x80 | (c & 0x3F)))!;
 	}
-	len += self.adjust(l)!;
+	if (self.flags.left)
+    {
+        len += self.pad(' ', self.width, len)!;
+	}
 	return len;
 }
 
@@ -653,7 +660,6 @@ fn usz? Formatter.out_char(&self, any arg) @private
 fn usz? Formatter.out_reverse(&self, char[] buf) @private
 {
 	usz n;
-	usz buffer_start_idx = self.idx;
 	usz len = buf.len;
 	// pad spaces up to given width
 	if (!self.flags.zeropad && !self.flags.left)

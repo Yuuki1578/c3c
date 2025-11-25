@@ -2,6 +2,9 @@
 // Use of this source code is governed by a LGPLv3.0
 // a copy of which can be found in the LICENSE file.
 
+#include <iso646.h>
+#include <math.h>
+
 #include "compiler_internal.h"
 
 static inline bool expr_list_is_constant_eval(Expr **exprs);
@@ -32,7 +35,7 @@ const char *expr_kind_to_string(ExprKind kind)
 		case EXPR_TYPECALL: return "typecall";
 		case EXPR_CT_ARG: return "ct_arg";
 		case EXPR_CT_CALL: return "ct_call";
-		case EXPR_CT_CASTABLE: return "ct_castable";
+		case EXPR_CT_ASSIGNABLE: return "ct_castable";
 		case EXPR_CT_DEFINED: return "ct_defined";
 		case EXPR_CT_EVAL: return "ct_eval";
 		case EXPR_CT_IDENT: return "ct_ident";
@@ -65,6 +68,7 @@ const char *expr_kind_to_string(ExprKind kind)
 		case EXPR_MAKE_ANY: return "make_any";
 		case EXPR_MAKE_SLICE: return "make_slice";
 		case EXPR_MEMBER_GET: return "member_get";
+		case EXPR_MEMBER_SET: return "member_set";
 		case EXPR_NAMED_ARGUMENT: return "named_argument";
 		case EXPR_NOP: return "nop";
 		case EXPR_OPERATOR_CHARS: return "operator_chars";
@@ -138,7 +142,7 @@ bool expr_is_zero(Expr *expr)
 		case CONST_BOOL:
 			return !expr->const_expr.b;
 		case CONST_ENUM:
-			return !expr->const_expr.enum_val->enum_constant.ordinal;
+			return !expr->const_expr.enum_val->enum_constant.inner_ordinal;
 		case CONST_BYTES:
 		case CONST_STRING:
 		{
@@ -221,9 +225,10 @@ bool expr_may_addr(Expr *expr)
 		case EXPR_ACCESS_RESOLVED:
 			return expr_may_addr(expr->access_resolved_expr.parent);
 		case EXPR_SUBSCRIPT:
-		case EXPR_SLICE:
 		case EXPR_MEMBER_GET:
 			return true;
+		case EXPR_MEMBER_SET:
+		case EXPR_SLICE:
 		case EXPR_BENCHMARK_HOOK:
 		case EXPR_TEST_HOOK:
 		case EXPR_VECTOR_FROM_ARRAY:
@@ -311,7 +316,7 @@ bool expr_is_runtime_const(Expr *expr)
 		case EXPR_BINARY:
 		case EXPR_OPERATOR_CHARS:
 		case EXPR_STRINGIFY:
-		case EXPR_CT_CASTABLE:
+		case EXPR_CT_ASSIGNABLE:
 		case EXPR_CT_DEFINED:
 		case EXPR_CT_IS_CONST:
 		case EXPR_LAMBDA:
@@ -328,6 +333,7 @@ bool expr_is_runtime_const(Expr *expr)
 		case EXPR_MACRO_BLOCK:
 		case EXPR_RETHROW:
 		case EXPR_MEMBER_GET:
+		case EXPR_MEMBER_SET:
 		case EXPR_BITACCESS:
 		case EXPR_COND:
 		case EXPR_PTR_ACCESS:
@@ -349,6 +355,7 @@ bool expr_is_runtime_const(Expr *expr)
 		case EXPR_VECTOR_TO_ARRAY:
 		case EXPR_SLICE_TO_VEC_ARRAY:
 		case EXPR_SCALAR_TO_VECTOR:
+		case EXPR_MAYBE_DEREF:
 			return expr_is_runtime_const(expr->inner_expr);
 		case EXPR_MAKE_SLICE:
 			expr = expr->make_slice_expr.ptr;
@@ -414,7 +421,7 @@ bool expr_is_runtime_const(Expr *expr)
 		case EXPR_INITIALIZER_LIST:
 			return expr_list_is_constant_eval(expr->initializer_list);
 		case EXPR_DESIGNATED_INITIALIZER_LIST:
-			return expr_list_is_constant_eval(expr->designated_init_list);
+			return (!expr->designated_init.splat || expr_is_const(expr->designated_init.splat)) && expr_list_is_constant_eval(expr->designated_init.list);
 		case EXPR_SLICE:
 			if (!exprid_is_runtime_const(expr->slice_expr.expr)) return false;
 			return expr->slice_expr.range.range_type == RANGE_CONST_RANGE;
@@ -445,7 +452,7 @@ bool expr_is_runtime_const(Expr *expr)
 			}
 			goto RETRY;
 		case EXPR_TERNARY:
-			ASSERT(!exprid_is_runtime_const(expr->ternary_expr.cond));
+			ASSERT(!exprid_is_runtime_const(expr->ternary_expr.cond) && !expr->ternary_expr.is_const);
 			return false;
 		case EXPR_FORCE_UNWRAP:
 		case EXPR_LAST_FAULT:
@@ -571,18 +578,29 @@ Expr *expr_new_two(Expr *first, Expr *second)
 void expr_insert_addr(Expr *original)
 {
 	ASSERT(original->resolve_status == RESOLVE_DONE);
+	Type *type = original->type;
+	bool optional = type_is_optional(type);
+	Type *new_type = type_add_optional(type_get_ptr(type_no_optional(type)), optional);
 	if (original->expr_kind == EXPR_UNARY && original->unary_expr.operator == UNARYOP_DEREF)
 	{
 		*original = *original->unary_expr.expr;
+		original->type = new_type;
 		return;
 	}
 	Expr *inner = expr_copy(original);
 	original->expr_kind = EXPR_UNARY;
-	Type *inner_type = inner->type;
-	bool optional = type_is_optional(inner->type);
-	original->type = type_add_optional(type_get_ptr(type_no_optional(inner_type)), optional);
-	original->unary_expr.operator = UNARYOP_ADDR;
-	original->unary_expr.expr = inner;
+	original->type = new_type;
+	original->unary_expr = (ExprUnary) { .operator = UNARYOP_ADDR, .expr = inner };
+}
+
+Expr *expr_generated_local(Expr *assign, Decl **decl_ref)
+{
+	Decl *decl = decl_new_generated_var(assign->type, VARDECL_LOCAL, assign->span);
+	Expr *expr_decl = expr_new(EXPR_DECL, decl->span);
+	expr_decl->decl_expr = decl;
+	decl->var.init_expr = assign;
+	*decl_ref = decl;
+	return expr_decl;
 }
 
 Expr *expr_generate_decl(Decl *decl, Expr *assign)
@@ -646,7 +664,7 @@ void expr_rewrite_to_const_zero(Expr *expr, Type *type)
 		case TYPE_VOID:
 		case TYPE_INFERRED_VECTOR:
 		case TYPE_WILDCARD:
-			UNREACHABLE
+			UNREACHABLE_VOID
 		case ALL_INTS:
 			expr_rewrite_const_int(expr, type, 0);
 			return;
@@ -659,10 +677,17 @@ void expr_rewrite_to_const_zero(Expr *expr, Type *type)
 		case TYPE_POINTER:
 		case TYPE_ANY:
 		case TYPE_INTERFACE:
-		case TYPE_ANYFAULT:
 		case TYPE_TYPEID:
 		case TYPE_FUNC_PTR:
 			expr_rewrite_const_null(expr, type);
+			return;
+		case TYPE_ANYFAULT:
+			expr->const_expr.const_kind = CONST_FAULT;
+			expr->const_expr.fault = NULL;
+			expr->resolve_status = RESOLVE_DONE;
+			break;
+		case TYPE_CONST_ENUM:
+			expr_rewrite_const_int(expr, type, 0);
 			return;
 		case TYPE_ENUM:
 			expr->const_expr.const_kind = CONST_ENUM;
@@ -671,25 +696,25 @@ void expr_rewrite_to_const_zero(Expr *expr, Type *type)
 			expr->resolve_status = RESOLVE_DONE;
 			break;
 		case TYPE_FUNC_RAW:
-		case TYPE_TYPEDEF:
+		case TYPE_ALIAS:
 		case TYPE_OPTIONAL:
 		case TYPE_TYPEINFO:
 		case TYPE_MEMBER:
 		case TYPE_UNTYPED_LIST:
 		case TYPE_INFERRED_ARRAY:
 		case TYPE_FLEXIBLE_ARRAY:
-			UNREACHABLE
+			UNREACHABLE_VOID
 		case TYPE_SLICE:
 			expr_rewrite_const_empty_slice(expr, type);
 			return;
 		case TYPE_STRUCT:
 		case TYPE_UNION:
 		case TYPE_BITSTRUCT:
-		case TYPE_VECTOR:
 		case TYPE_ARRAY:
+		case VECTORS:
 			expr_rewrite_const_initializer(expr, type, const_init_new_zero(type));
 			return;
-		case TYPE_DISTINCT:
+		case TYPE_TYPEDEF:
 			expr_rewrite_to_const_zero(expr, canonical->decl->distinct->type);
 			break;
 	}
@@ -794,6 +819,7 @@ bool expr_is_pure(Expr *expr)
 		case EXPR_RVALUE:
 		case EXPR_RECAST:
 		case EXPR_ADDR_CONVERSION:
+		case EXPR_MAYBE_DEREF:
 			return expr_is_pure(expr->inner_expr);
 		case EXPR_INT_TO_BOOL:
 			return expr_is_pure(expr->int_to_bool_expr.inner);
@@ -810,7 +836,7 @@ bool expr_is_pure(Expr *expr)
 		case EXPR_TYPECALL:
 		case EXPR_CT_ARG:
 		case EXPR_CT_CALL:
-		case EXPR_CT_CASTABLE:
+		case EXPR_CT_ASSIGNABLE:
 		case EXPR_CT_DEFINED:
 		case EXPR_CT_IS_CONST:
 		case EXPR_CT_EVAL:
@@ -824,6 +850,7 @@ bool expr_is_pure(Expr *expr)
 		case EXPR_TYPEINFO:
 		case EXPR_LAST_FAULT:
 		case EXPR_MEMBER_GET:
+		case EXPR_MEMBER_SET:
 			return true;
 		case EXPR_TWO:
 			return expr_is_pure(expr->two_expr.first) && expr_is_pure(expr->two_expr.last);
@@ -893,6 +920,8 @@ bool expr_is_pure(Expr *expr)
 			if (!exprid_is_pure(expr->slice_expr.expr)) return false;
 			switch (expr->slice_expr.range.range_type)
 			{
+				case RANGE_SINGLE_ELEMENT:
+					UNREACHABLE
 				case RANGE_CONST_RANGE:
 					return true;
 				case RANGE_CONST_END:
@@ -989,6 +1018,23 @@ bool expr_is_simple(Expr *expr, bool to_float)
 	UNREACHABLE
 }
 
+Expr *expr_new_binary(SourceSpan span, Expr *left, Expr *right, BinaryOp op)
+{
+	Expr *expr = expr_calloc();
+	expr->expr_kind = EXPR_BINARY;
+	expr->span = span;
+	expr->binary_expr.operator = op;
+	expr->binary_expr.left = exprid(left);
+	expr->binary_expr.right = exprid(right);
+	return expr;
+}
+
+Expr *expr_new_cond(Expr *expr)
+{
+	Expr *cond = expr_new(EXPR_COND, expr->span);
+	vec_add(cond->cond_expr, expr);
+	return cond;
+}
 
 Expr *expr_new(ExprKind kind, SourceSpan start)
 {
@@ -1113,34 +1159,6 @@ Expr *expr_variable(Decl *decl)
 	expr->unresolved_ident_expr = (ExprUnresolvedIdentifier) { .ident = decl->name };
 	expr->resolve_status = RESOLVE_NOT_DONE;
 	return expr;
-}
-
-void expr_rewrite_insert_deref(Expr *original)
-{
-	// Assume *(&x) => x
-	if (original->expr_kind == EXPR_UNARY && original->unary_expr.operator == UNARYOP_ADDR)
-	{
-		*original = *original->unary_expr.expr;
-		return;
-	}
-
-	// Allocate our new and create our new inner, and overwrite the original.
-	Expr *inner = expr_copy(original);
-	original->expr_kind = EXPR_UNARY;
-	original->type = NULL;
-	original->unary_expr.operator = UNARYOP_DEREF;
-	original->unary_expr.expr = inner;
-
-	// In the case the original is already resolved, we want to resolve the deref as well.
-	if (original->resolve_status == RESOLVE_DONE)
-	{
-		Type *no_fail  = type_no_optional(inner->type);
-		ASSERT(no_fail->canonical->type_kind == TYPE_POINTER);
-
-		// Only fold to the canonical type if it wasn't a pointer.
-		Type *pointee = no_fail->type_kind == TYPE_POINTER ? no_fail->pointer : no_fail->canonical->pointer;
-		original->type = type_add_optional(pointee, IS_OPTIONAL(inner));
-	}
 }
 
 void expr_rewrite_const_ref(Expr *expr_to_rewrite, Decl *decl)

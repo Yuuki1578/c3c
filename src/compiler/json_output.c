@@ -88,7 +88,7 @@ static inline const char *decl_type_to_string(Decl *type)
 		case DECL_CT_EXEC: return "$exec";
 		case DECL_CT_INCLUDE: return "$include";
 		case DECL_ALIAS: return "alias";
-		case DECL_DISTINCT: return "typedef";
+		case DECL_TYPEDEF: return "typedef";
 		case DECL_ENUM: return "enum";
 		case DECL_ENUM_CONSTANT: return "enum_const";
 		case DECL_FAULT: return "fault";
@@ -96,11 +96,13 @@ static inline const char *decl_type_to_string(Decl *type)
 		case DECL_FUNC: return "function";
 		case DECL_GROUP: return "globals";
 		case DECL_IMPORT: return "import";
+		case DECL_ALIAS_PATH: return "module_alias";
 		case DECL_MACRO: return "macro";
 		case DECL_INTERFACE: return "interface";
 		case DECL_STRUCT: return "struct";
 		case DECL_UNION: return "union";
- 		case DECL_TYPEDEF: return "typedef";
+ 		case DECL_TYPE_ALIAS: return "type_alias";
+		case DECL_CONST_ENUM: return "raw_enum";
 		case DECL_BODYPARAM:
 		case DECL_DECLARRAY:
 		case DECL_ERASED:
@@ -122,7 +124,7 @@ void print_type(FILE *file, TypeInfo *type)
 	switch (type->kind)
 	{
 		case TYPE_INFO_POISON:
-			UNREACHABLE;
+			UNREACHABLE_VOID;
 		case TYPE_INFO_IDENTIFIER:
 		case TYPE_INFO_CT_IDENTIFIER:
 			if (type->unresolved.path)
@@ -290,7 +292,7 @@ static inline void emit_type_data(FILE *file, Module *module, Decl *type)
 			emit_members(file, type->strukt.members, 0);
 			fputs("\n\t\t\t]", file);
 			break;
-		case DECL_DISTINCT:
+		case DECL_TYPEDEF:
 			PRINT(",\n\t\t\t\"type\": \"");
 			print_type(file, type->distinct);
 			PRINTF("\",\n\t\t\t\"inline\": \"%s\"", type->is_substruct ? "true" : "false");
@@ -327,7 +329,7 @@ static inline void emit_param(FILE *file, Decl *decl)
 			PRINT("type");
 			break;
 		default:
-			UNREACHABLE
+			UNREACHABLE_VOID
 	}
 	PRINTF("\",\n\t\t\t\t\t\"name\": \"%s\",\n", decl->name ? decl->name : "");
 	PRINTF("\t\t\t\t\t\"type\": \"");
@@ -400,7 +402,7 @@ static inline void emit_types(FILE *file)
 	{
 		bool first = true;
 		FOREACH_DECL(Decl *type, compiler.context.module_list)
-					if (!decl_is_user_defined_type(type) && type->decl_kind != DECL_TYPEDEF) continue;
+					if (!decl_is_user_defined_type(type) && type->decl_kind != DECL_TYPE_ALIAS) continue;
 					if (decl_is_hidden(type)) continue;
 					INSERT_COMMA;
 					emit_type_data(file, module, type);
@@ -412,7 +414,7 @@ static inline void emit_types(FILE *file)
 	{
 		bool first = true;
 		FOREACH_DECL(Decl *type, compiler.context.generic_module_list)
-					if (!decl_is_user_defined_type(type) && type->decl_kind != DECL_TYPEDEF) continue;
+					if (!decl_is_user_defined_type(type) && type->decl_kind != DECL_TYPE_ALIAS) continue;
 					if (decl_is_hidden(type)) continue;
 					INSERT_COMMA;
 					emit_type_data(file, module, type);

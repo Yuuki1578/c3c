@@ -45,7 +45,7 @@ fn Path? tcwd() => cwd(tmem) @inline;
 *>
 macro void? chdir(path)
 {
-	$if @typeis(path, String):
+	$if $typeof(path) == String:
 		@pool()
 		{
 			return os::native_chdir(temp(path));
@@ -57,9 +57,21 @@ macro void? chdir(path)
 
 fn Path? temp_directory(Allocator allocator) => os::native_temp_directory(allocator);
 
+fn Path? home_directory(Allocator allocator) => os::native_home_directory(allocator);
+fn Path? desktop_directory(Allocator allocator) => os::native_user_directory(allocator, DESKTOP);
+fn Path? videos_directory(Allocator allocator) => os::native_user_directory(allocator, VIDEOS);
+fn Path? music_directory(Allocator allocator) => os::native_user_directory(allocator, MUSIC);
+fn Path? documents_directory(Allocator allocator) => os::native_user_directory(allocator, DOCUMENTS);
+fn Path? screenshots_directory(Allocator allocator) => os::native_user_directory(allocator, SCREENSHOTS);
+fn Path? saved_games_directory(Allocator allocator) => os::native_user_directory(allocator, SAVED_GAMES);
+fn Path? downloads_directory(Allocator allocator) => os::native_user_directory(allocator, DOWNLOADS);
+fn Path? pictures_directory(Allocator allocator) => os::native_user_directory(allocator, PICTURES);
+fn Path? templates_directory(Allocator allocator) => os::native_user_directory(allocator, TEMPLATES);
+fn Path? public_share_directory(Allocator allocator) => os::native_user_directory(allocator, PUBLIC_SHARE);
+
 fn void? delete(Path path) => os::native_remove(path.str_view()) @inline;
 
-macro bool @is_pathlike(#path) => @typeis(#path, String) || @typeis(#path, Path);
+macro bool @is_pathlike(#path) @const => $typeof(#path) == String ||| $typeof(#path) == Path;
 
 macro bool is_separator(char c, PathEnv path_env = DEFAULT_ENV)
 {
@@ -93,9 +105,9 @@ enum MkdirPermissions
  @param recursive : `If directories in between should be created if they're missing, defaults to false`
  @param permissions : `The permissions to set on the directory`
 *>
-macro bool? mkdir(Path path, bool recursive = false, MkdirPermissions permissions = NORMAL)
+macro bool? mkdir(path, bool recursive = false, MkdirPermissions permissions = NORMAL)
 {
-	$if @typeis(path, String):
+	$if $typeof(path) == String:
 		@pool() { return _mkdir(temp(path), recursive, permissions); };
 	$else
 		return _mkdir(path, recursive, permissions);
@@ -113,7 +125,7 @@ macro bool? mkdir(Path path, bool recursive = false, MkdirPermissions permission
 *>
 macro bool? rmdir(path)
 {
-	$if @typeis(path, String):
+	$if $typeof(path) == String:
 		@pool() { return _rmdir(temp(path)); };
 	$else
 		return _mkdir(path);
@@ -148,27 +160,20 @@ fn Path? new(Allocator allocator, String path, PathEnv path_env = DEFAULT_ENV)
 
  @return? INVALID_PATH : `if the path was invalid`
 *>
-fn Path? temp(String path, PathEnv path_env = DEFAULT_ENV)
-{
-	return new(tmem, path, path_env);
-}
+fn Path? temp(String path, PathEnv path_env = DEFAULT_ENV) => new(tmem, path, path_env);
 
-fn Path? from_win32_wstring(Allocator allocator, WString path) => @pool()
+fn Path? from_wstring(Allocator allocator, WString path) => @pool()
 {
 	return path::new(allocator, string::tfrom_wstring(path)!);
 }
 
-fn Path? for_windows(Allocator allocator, String path)
-{
-	return new(allocator, path, WIN32);
-}
+fn Path? from_win32_wstring(Allocator allocator, WString path) @deprecated("Use 'from_wstring' instead") => from_wstring(allocator, path);
 
-fn Path? for_posix(Allocator allocator, String path)
-{
-	return new(allocator, path, POSIX);
-}
+fn Path? for_windows(Allocator allocator, String path) => new(allocator, path, WIN32);
 
-fn bool Path.equals(self, Path p2)
+fn Path? for_posix(Allocator allocator, String path) => new(allocator, path, POSIX);
+
+fn bool Path.equals(self, Path p2) @operator(==)
 {
 	return self.env == p2.env && self.path_string == p2.path_string;
 }
@@ -181,13 +186,11 @@ fn bool Path.equals(self, Path p2)
 fn Path? Path.append(self, Allocator allocator, String filename)
 {
 	if (!self.path_string.len) return new(allocator, filename, self.env)!;
-	assert(!is_separator(self.path_string[^1], self.env));
-
 	@pool()
 	{
 		DString dstr = dstring::temp_with_capacity(self.path_string.len + 1 + filename.len);
 		dstr.append(self.path_string);
-		dstr.append(PREFERRED_SEPARATOR);
+		if (!is_separator(self.path_string[^1], self.env)) dstr.append(PREFERRED_SEPARATOR);
 		dstr.append(filename);
 		return new(allocator, dstr.str_view(), self.env);
 	};
@@ -340,15 +343,9 @@ fn String Path.volume_name(self)
 	return self.path_string[:len];
 }
 
-fn Path? String.to_path(self, Allocator allocator)
-{
-	return new(allocator, self);
-}
+fn Path? String.to_path(self, Allocator allocator) => new(allocator, self);
 
-fn Path? String.to_tpath(self)
-{
-	return new(tmem, self);
-}
+fn Path? String.to_tpath(self) => new(tmem, self);
 
 fn usz? volume_name_len(String path, PathEnv path_env) @local
 {
@@ -400,6 +397,19 @@ fn Path? Path.parent(self)
 	{
 		if (is_separator(c, self.env))
 		{
+			if (i == 0) return { self.path_string[..0], self.env, null };
+			if (self.env == WIN32 && i > 1)
+			{
+				if (try volume_len = volume_name_len(self.path_string, WIN32))
+				{
+					// Handle C:\foo
+					if (volume_len == i)
+					{
+						if (i + 1 == self.path_string.len) return NO_PARENT?;
+						return { self.path_string[:i + 1], WIN32, null };
+					}
+				}
+			}
 			return { self.path_string[:i], self.env, null };
 		}
 	}
@@ -527,7 +537,7 @@ fn String? normalize(String path_str, PathEnv path_env = DEFAULT_ENV)
 	return path_str[:len];
 }
 
-fn ZString Path.as_zstr(self) => (ZString)self.path_string.ptr;
+fn ZString Path.as_zstr(self) @deprecated => (ZString)self.path_string.ptr;
 
 fn String Path.root_directory(self)
 {
@@ -607,29 +617,17 @@ fn bool? traverse(Path path, TraverseCallback callback, any data)
 	return false;
 }
 
-fn String Path.str_view(self) @inline
-{
-	return self.path_string;
-}
+fn String Path.str_view(self) @inline => self.path_string;
 
 
-fn bool Path.has_suffix(self, String str)
-{
-	return self.str_view().ends_with(str);
-}
+fn bool Path.has_suffix(self, String str) => self.str_view().ends_with(str);
 
 <*
  @require self.allocator != null : "This Path should never be freed"
 *>
-fn void Path.free(self)
-{
-	allocator::free(self.allocator, self.path_string.ptr);
-}
+fn void Path.free(self) => allocator::free(self.allocator, self.path_string.ptr);
 
-fn usz? Path.to_format(&self, Formatter* formatter) @dynamic
-{
-	return formatter.print(self.str_view());
-}
+fn usz? Path.to_format(&self, Formatter* formatter) @dynamic => formatter.print(self.str_view());
 
 
 const bool[256] RESERVED_PATH_CHAR_POSIX = {
@@ -649,10 +647,7 @@ const bool[256] RESERVED_PATH_CHAR_WIN32 = {
 	['*'] = true,
 };
 
-macro bool is_reserved_win32_path_char(char c)
-{
-	return RESERVED_PATH_CHAR_WIN32[c];
-}
+macro bool is_reserved_win32_path_char(char c) => RESERVED_PATH_CHAR_WIN32[c];
 
 macro bool is_reserved_path_char(char c, PathEnv path_env = DEFAULT_ENV)
 {

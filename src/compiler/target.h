@@ -29,11 +29,10 @@ typedef struct
 	AsmArgBits vec_bits : 16;
 } AsmArgType;
 
-typedef struct X86Features
+typedef struct CpuFeatures
 {
 	unsigned long long bits[2];
-	const char *as_string;
-} X86Features;
+} CpuFeatures;
 
 typedef struct
 {
@@ -57,9 +56,9 @@ typedef struct
 typedef struct
 {
 	const char *name;
-	AsmArgType param[MAX_ASM_INSTRUCTION_PARAMS];
+	AsmArgType param[MAX_ASM_INSTRUCTION_PARAMS]; // Types of arguments available in each slot
 	unsigned param_count;
-	Clobbers mask;
+	Clobbers mask;                                // Which will it clobber
 } AsmInstruction;
 
 typedef struct
@@ -96,7 +95,7 @@ typedef struct
 		} x86;
 		struct
 		{
-			X86Features features;
+			CpuFeatures features;
 			unsigned align_simd_default : 16;
 			bool win64_simd_as_array : 1;
 			bool soft_float : 1;

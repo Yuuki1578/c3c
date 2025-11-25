@@ -8,10 +8,11 @@ on:
 
 env:
   LLVM_RELEASE_VERSION_WINDOWS: 18
-  LLVM_RELEASE_VERSION_MAC: 17
-  LLVM_RELEASE_VERSION_LINUX: 17
-  LLVM_RELEASE_VERSION_UBUNTU22: 17
-  LLVM_DEV_VERSION: 21
+  LLVM_RELEASE_VERSION_MAC: 18
+  LLVM_RELEASE_VERSION_LINUX: 19
+  LLVM_RELEASE_VERSION_OPENBSD: 19
+  LLVM_RELEASE_VERSION_UBUNTU22: 19
+  LLVM_DEV_VERSION: 22
 jobs:
 
   build-msvc:
@@ -52,9 +53,9 @@ jobs:
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvarsall.bat" x64
           cd resources/testproject
           ..\..\build\${{ matrix.build_type }}\c3c.exe -vvv --emit-llvm run hello_world_win32 --trust=full
-          dir build\llvm\windows-x64
+          dir out\llvm\windows-x64
           ..\..\build\${{ matrix.build_type }}\c3c.exe clean
-          dir build\llvm\windows-x64
+          dir out\llvm\windows-x64
 
 
       - name: Build testproject lib
@@ -87,15 +88,15 @@ jobs:
           ..\build\${{ matrix.build_type }}\c3c.exe compile --lib raylib55 --print-linking examples\raylib\raylib_snake.c3
           ..\build\${{ matrix.build_type }}\c3c.exe compile --lib raylib55 --print-linking examples\raylib\raylib_tetris.c3
 
-      - name: Compile run unit tests
-        run: |
-          cd test
-          ..\build\${{ matrix.build_type }}\c3c.exe compile-test unit -O1
-
       - name: run compiler tests
         run: |
           cd test
-          ..\build\${{ matrix.build_type }}\c3c.exe compile-run -O1 src/test_suite_runner.c3 -- ..\build\${{ matrix.build_type }}\c3c.exe test_suite/ --no-terminal
+          ..\build\${{ matrix.build_type }}\c3c.exe compile-run -O1 src/test_suite_runner.c3 -- ..\build\${{ matrix.build_type }}\c3c.exe test_suite/
+
+      - name: Compile run unit tests
+        run: |
+          cd test
+          ..\build\${{ matrix.build_type }}\c3c.exe compile-test unit -O1 -D SLOW_TESTS
 
       - name: Test python script
         run: |
@@ -229,13 +230,14 @@ jobs:
       fail-fast: false
       matrix:
         build_type: [Release, Debug]
-        llvm_version: [17, 18, 19, 20]
+        llvm_version: [17, 18, 19, 20, 21, 22]
 
     steps:
       - uses: actions/checkout@v4
       - name: Install common deps
         run: |
-          sudo apt-get install zlib1g zlib1g-dev python3 ninja-build curl
+          sudo apt-get update
+          sudo apt-get install zlib1g zlib1g-dev python3 ninja-build curl libcurl4-openssl-dev
 
       - name: Install Clang ${{matrix.llvm_version}}
         run: |
@@ -273,6 +275,7 @@ jobs:
                 -DCMAKE_OBJCOPY=llvm-objcopy-${{matrix.llvm_version}} \
                 -DCMAKE_STRIP=llvm-strip-${{matrix.llvm_version}} \
                 -DCMAKE_DLLTOOL=llvm-dlltool-${{matrix.llvm_version}} \
+                -DLLVM_ENABLE_LIBXML2=OFF \
                 -DC3_LLVM_VERSION=${{matrix.llvm_version}}
           cmake --build build
       - name: CMake18
@@ -287,6 +290,7 @@ jobs:
                 -DCMAKE_OBJCOPY=llvm-objcopy-${{matrix.llvm_version}} \
                 -DCMAKE_STRIP=llvm-strip-${{matrix.llvm_version}} \
                 -DCMAKE_DLLTOOL=llvm-dlltool-${{matrix.llvm_version}} \
+                -DLLVM_ENABLE_LIBXML2=OFF \
                 -DC3_LLVM_VERSION=${{matrix.llvm_version}}.1
           cmake --build build
 
@@ -345,7 +349,7 @@ jobs:
       - name: Compile run unit tests
         run: |
           cd test
-          ../build/c3c compile-test unit
+          ../build/c3c compile-test unit -D SLOW_TESTS
 
       - name: Build testproject
         run: |
@@ -377,6 +381,10 @@ jobs:
           ls mylib.c3l
           ./build/c3c init myproject
           ls myproject
+
+      - name: Vendor-fetch
+        run: |
+          ./build/c3c vendor-fetch raylib55
 
       - name: run compiler tests
         run: |
@@ -413,7 +421,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install common deps
         run: |
-          sudo apt-get install zlib1g zlib1g-dev python3 ninja-build curl
+          sudo apt-get update
+          sudo apt-get install zlib1g zlib1g-dev python3 ninja-build curl libcurl4-openssl-dev
 
       - name: Install Clang ${{matrix.llvm_version}}
         run: |
@@ -439,6 +448,7 @@ jobs:
                 -DCMAKE_OBJCOPY=llvm-objcopy-${{matrix.llvm_version}} \
                 -DCMAKE_STRIP=llvm-strip-${{matrix.llvm_version}} \
                 -DCMAKE_DLLTOOL=llvm-dlltool-${{matrix.llvm_version}} \
+                -DLLVM_ENABLE_LIBXML2=OFF \
                 -DC3_LLVM_VERSION=${{matrix.llvm_version}}
           cmake --build build
       - name: CMake
@@ -453,8 +463,10 @@ jobs:
                 -DCMAKE_OBJCOPY=llvm-objcopy-${{matrix.llvm_version}} \
                 -DCMAKE_STRIP=llvm-strip-${{matrix.llvm_version}} \
                 -DCMAKE_DLLTOOL=llvm-dlltool-${{matrix.llvm_version}} \
+                -DLLVM_ENABLE_LIBXML2=OFF \
                 -DC3_LLVM_VERSION=${{matrix.llvm_version}}.1
           cmake --build build
+
       - name: Compile and run some examples
         run: |
           cd resources
@@ -489,7 +501,7 @@ jobs:
       - name: Compile run unit tests
         run: |
           cd test
-          ../build/c3c compile-test unit --sanitize=address
+          ../build/c3c compile-test unit --sanitize=address -D SLOW_TESTS
 
       - name: Build testproject
         run: |
@@ -500,6 +512,10 @@ jobs:
         run: |
           cd resources/testproject
           ../../build/c3c run -vvv --linker=builtin --trust=full
+
+      - name: Vendor-fetch
+        run: |
+          ./build/c3c vendor-fetch raylib55
 
       - name: run compiler tests
         run: |
@@ -583,7 +599,7 @@ jobs:
       - name: Compile run unit tests
         run: |
           cd test
-          ../build/c3c compile-test unit
+          ../build/c3c compile-test unit -D SLOW_TESTS
 
       - name: Build testproject
         run: |
@@ -665,7 +681,7 @@ jobs:
       - name: Compile run unit tests
         run: |
           cd test
-          ../build/c3c compile-test unit -O1
+          ../build/c3c compile-test unit -O1 -D SLOW_TESTS
 
       - name: Test WASM
         run: |
@@ -747,6 +763,119 @@ jobs:
           nix build -L ".#c3c-checks"
         fi
 
+  build-openbsd:
+    runs-on: ubuntu-latest
+    strategy:
+      # Don't abort runners if a single one fails
+      fail-fast: false
+      matrix:
+        build_type: [Release, Debug]
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: OpenBSD VM
+        uses: vmactions/openbsd-vm@main
+        with:
+          prepare: |
+            pkg_add cmake llvm-20.1.8p1 ninja
+
+          run: |
+            echo "CMake"
+            cmake -B build \
+              -G Ninja \
+              -DCMAKE_BUILD_TYPE=${{matrix.build_type}} \
+              -DLLVM_ENABLE_LIBXML2=OFF \
+              -DC3_LLVM_VERSION=${LLVM_RELEASE_VERSION_OPENBSD}
+            cmake --build build
+            echo "Compile and run some examples"
+            cd resources
+            ../build/c3c compile examples/base64.c3
+            ../build/c3c compile examples/binarydigits.c3
+            ../build/c3c compile examples/brainfk.c3
+            ../build/c3c compile examples/factorial_macro.c3
+            ../build/c3c compile examples/fasta.c3
+            ../build/c3c compile examples/gameoflife.c3
+            ../build/c3c compile examples/hash.c3
+            ../build/c3c compile-only examples/levenshtein.c3
+            ../build/c3c compile examples/load_world.c3
+            ../build/c3c compile-only examples/map.c3
+            ../build/c3c compile examples/mandelbrot.c3
+            ../build/c3c compile examples/plus_minus.c3
+            ../build/c3c compile examples/nbodies.c3
+            ../build/c3c compile examples/spectralnorm.c3
+            ../build/c3c compile examples/swap.c3
+            ../build/c3c compile examples/contextfree/boolerr.c3
+            ../build/c3c compile examples/contextfree/dynscope.c3
+            ../build/c3c compile examples/contextfree/guess_number.c3
+            ../build/c3c compile examples/contextfree/multi.c3
+            ../build/c3c compile examples/contextfree/cleanup.c3
+            ../build/c3c compile-run examples/hello_world_many.c3
+            ../build/c3c compile-run examples/time.c3
+            ../build/c3c compile-run examples/fannkuch-redux.c3
+            ../build/c3c compile-run examples/contextfree/boolerr.c3
+            ../build/c3c compile-run examples/load_world.c3
+            ../build/c3c compile-run examples/process.c3
+            ../build/c3c compile-run examples/ls.c3
+            ../build/c3c compile-run examples/args.c3 -- foo -bar "baz baz"
+            cd ..
+            echo "Compile and run dynlib-test"
+            cd resources/examples/dynlib-test
+            ../../../build/c3c -vv dynamic-lib add.c3
+            mv add.so libadd.so
+            cc test.c -L. -ladd -Wl,-rpath=.         
+            ./a.out
+            ../../../build/c3c compile-run test.c3 -L . -l add -z -Wl,-rpath=.
+            cd ../../../
+            echo "Compile and run staticlib-test"
+            cd resources/examples/staticlib-test
+            ../../../build/c3c -vv static-lib add.c3
+            mv add.a libadd.a
+            cc test.c -L. -ladd         
+            ./a.out
+            ../../../build/c3c compile-run test.c3 -L . -l add           
+            cd ../../../
+            echo "Compile run unit tests"
+            cd test
+            ../build/c3c --max-mem 128 compile-test unit -D SLOW_TESTS
+            cd ..
+            echo "Build testproject"
+            cd resources/testproject
+            ../../build/c3c run -vvv --trust=full
+            cd ../../
+            echo "Test WASM"
+            cd resources/testfragments
+            ../../build/c3c compile --target wasm32 -g0 --no-entry -Os wasm4.c3
+            cd ../../
+            echo "Build testproject direct linker"
+            cd resources/testproject
+            ../../build/c3c run -vvv --linker=builtin --trust=full
+            cd ../../
+            echo "Init a library & a project"
+            ./build/c3c init-lib mylib
+            ls mylib.c3l
+            ./build/c3c init myproject
+            ls myproject
+            echo "run compiler tests"
+            cd test
+            ../build/c3c --max-mem 128 compile-run -O1 src/test_suite_runner.c3 -- ../build/c3c  test_suite/
+            cd ..
+
+      - name: bundle_output
+        run: |
+          mkdir c3
+          cp -r lib c3
+          cp msvc_build_libraries.py c3
+          cp build/c3c c3
+          cp README.md c3
+          cp releasenotes.md c3
+          tar czf c3-openbsd-${{matrix.build_type}}.tar.gz c3
+
+      - name: upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: c3-openbsd-${{matrix.build_type}}
+          path: c3-openbsd-${{matrix.build_type}}.tar.gz
+
   release:
     runs-on: ubuntu-22.04
     needs: [build-msvc, build-linux, build-mac, build-linux-ubuntu22]
@@ -769,11 +898,13 @@ jobs:
       - run: zip -r c3-windows-debug.zip c3-windows-Debug
       - run: mv c3-linux-Release/c3-linux-Release.tar.gz c3-linux-Release/c3-linux.tar.gz
       - run: mv c3-linux-Debug/c3-linux-Debug.tar.gz c3-linux-Debug/c3-linux-debug.tar.gz
+      - run: mv c3-openbsd-Release/c3-openbsd-Release.tar.gz c3-openbsd-Release/c3-openbsd.tar.gz
+      - run: mv c3-openbsd-Debug/c3-openbsd-Debug.tar.gz c3-openbsd-Debug/c3-openbsd-debug.tar.gz
       - run: mv c3-ubuntu-22-Release/c3-ubuntu-22-Release.tar.gz c3-ubuntu-22-Release/c3-ubuntu-22.tar.gz
       - run: mv c3-ubuntu-22-Debug/c3-ubuntu-22-Debug.tar.gz c3-ubuntu-22-Debug/c3-ubuntu-22-debug.tar.gz
       - run: mv c3-macos-Release/c3-macos-Release.zip c3-macos-Release/c3-macos.zip
       - run: mv c3-macos-Debug/c3-macos-Debug.zip c3-macos-Debug/c3-macos-debug.zip
-      - run: gh release delete latest-prerelease --cleanup-tag -y || true
+      - run: gh release delete latest-prerelease-tag --cleanup-tag -y || true
       - run: echo "RELEASE_NAME=latest-prerelease-$(date +'%Y%m%d-%H%M')" >> $GITHUB_ENV
 
       - id: create_release
@@ -781,7 +912,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: latest-prerelease
+          tag_name: latest-prerelease-tag
           name: ${{ env.RELEASE_NAME }}
           draft: false
           prerelease: true
@@ -790,6 +921,8 @@ jobs:
             c3-windows-debug.zip
             c3-linux-Release/c3-linux.tar.gz
             c3-linux-Debug/c3-linux-debug.tar.gz
+            c3-openbsd-Release/c3-openbsd.tar.gz
+            c3-openbsd-Debug/c3-openbsd-debug.tar.gz
             c3-ubuntu-22-Release/c3-ubuntu-22.tar.gz
             c3-ubuntu-22-Debug/c3-ubuntu-22-debug.tar.gz
             c3-macos-Release/c3-macos.zip

@@ -273,12 +273,19 @@ static void skip_whitespace(Lexer *lexer)
 				FALLTHROUGH;
 			case ' ':
 			case '\t':
-			case '\f':
 				next(lexer);
 				break;
 			case '\r':
 				// Already filtered out.
-				UNREACHABLE
+				UNREACHABLE_VOID
+			case '#':
+				if (lexer->file_begin == lexer->current && peek_next(lexer) == '!')
+				{
+					skip(lexer, 2);
+					parse_line_comment(lexer);
+					continue;
+				}
+				return;
 			default:
 				return;
 		}
@@ -351,6 +358,7 @@ EXIT:;
 		default:
 			break;
 	}
+	assert(type != TOKEN_INVALID_TOKEN);
 	return new_token(lexer, type, interned_string);
 }
 
@@ -1219,6 +1227,13 @@ EXIT:;
 	return true;
 }
 
+static bool next_is_ident(Lexer *lexer)
+{
+	size_t i = 0;
+	while (lexer->current[i] == '_') i++;
+	return char_is_lower(lexer->current[i]);
+}
+
 static bool lexer_scan_token_inner(Lexer *lexer)
 {
 	// Now skip the whitespace.
@@ -1249,7 +1264,8 @@ static bool lexer_scan_token_inner(Lexer *lexer)
 		case '"':
 			return scan_string(lexer);
 		case '#':
-			return scan_ident(lexer, TOKEN_HASH_IDENT, TOKEN_HASH_CONST_IDENT, TOKEN_HASH_TYPE_IDENT, '#');
+			if (!next_is_ident(lexer)) return new_token(lexer, TOKEN_HASH, "#");
+			return scan_ident(lexer, TOKEN_HASH_IDENT, TOKEN_INVALID_TOKEN, TOKEN_INVALID_TOKEN, '#');
 		case '$':
 			if (match(lexer, '$'))
 			{
@@ -1306,7 +1322,7 @@ static bool lexer_scan_token_inner(Lexer *lexer)
 		case '^':
 			return match(lexer, '=') ? new_token(lexer, TOKEN_BIT_XOR_ASSIGN, "^=") : new_token(lexer, TOKEN_BIT_XOR, "^");
 		case '?':
-			if (match(lexer, '?')) return new_token(lexer, TOKEN_QUESTQUEST, "??");
+			if (match(lexer, '?')) return match(lexer, '?') ? new_token(lexer, TOKEN_CT_TERNARY, "???") : new_token(lexer, TOKEN_QUESTQUEST, "??");
 			return match(lexer, ':') ? new_token(lexer, TOKEN_ELVIS, "?:") : new_token(lexer, TOKEN_QUESTION, "?");
 		case '<':
 			if (match(lexer, '<'))
@@ -1345,7 +1361,7 @@ static bool lexer_scan_token_inner(Lexer *lexer)
 		case '+':
 			if (match(lexer, '+'))
 			{
-				if (match(lexer, '+')) return new_token(lexer, TOKEN_CT_CONCAT, "+++");
+				if (match(lexer, '+')) return match(lexer, '=') ? new_token(lexer, TOKEN_CT_CONCAT_ASSIGN, "+++=") : new_token(lexer, TOKEN_CT_CONCAT, "+++");
 				return new_token(lexer, TOKEN_PLUSPLUS, "++");
 			}
 			if (match(lexer, '=')) return new_token(lexer, TOKEN_PLUS_ASSIGN, "+=");

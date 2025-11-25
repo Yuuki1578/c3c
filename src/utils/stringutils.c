@@ -103,6 +103,28 @@ bool str_is_type(const char *string)
     return found_lower;
 }
 
+bool slice_is_type(const char *string, size_t len)
+{
+	const char *begin = scan_past_underscore(string);
+	if (!begin) return false;
+	const char *end = string  + len;
+	if (begin == end) return false;
+	char c = begin++[0];
+	if (!char_is_upper(c)) return false;
+	bool found_lower = false;
+	while (begin != end)
+	{
+		c = begin++[0];
+		if (char_is_lower(c))
+		{
+			found_lower = true;
+			continue;
+		}
+		if (!char_is_alphanum_(c)) return false;
+	}
+	return found_lower;
+}
+
 bool str_is_identifier(const char *string)
 {
     string = scan_past_underscore(string);
@@ -119,6 +141,14 @@ bool str_is_identifier(const char *string)
 bool str_eq(const char *str1, const char *str2)
 {
 	return str1 == str2 || (str1 && str2 && strcmp(str1, str2) == 0);
+}
+
+bool str_ends_with(const char *str, const char *end)
+{
+	size_t str_len = strlen(str);
+	size_t end_len = strlen(end);
+	if (end_len > str_len) return false;
+	return memcmp(str + str_len - end_len, end, end_len) == 0;
 }
 
 bool str_is_integer(const char *string)
@@ -146,7 +176,7 @@ bool str_is_valid_constant(const char *string)
     return true;
 }
 
-void str_ellide_in_place(char *string, size_t max_size_shown)
+void str_elide_in_place(char *string, size_t max_size_shown)
 {
 	size_t len = strlen(string);
 	if (max_size_shown > len) return;
@@ -310,6 +340,20 @@ char *str_cat(const char *a, const char *b)
 	return buffer;
 }
 
+char *str_cat_len(const char *a, size_t a_len, const char *b, size_t b_len)
+{
+	char *buffer = malloc_string(a_len + b_len + 1);
+	memcpy(buffer, a, a_len);
+	memcpy(buffer + a_len, b, b_len);
+	buffer[a_len + b_len] = '\0';
+	return buffer;
+}
+
+char *str_dup(const char *str)
+{
+	return str_copy(str, strlen(str));
+}
+
 char *str_copy(const char *start, size_t str_len)
 {
 	char *dst = calloc_string(str_len + 1);
@@ -323,9 +367,14 @@ void scratch_buffer_clear(void)
 	scratch_buffer.len = 0;
 }
 
+bool scratch_buffer_may_append(size_t len)
+{
+	return len + scratch_buffer.len < MAX_STRING_BUFFER - 1;
+}
+
 void scratch_buffer_append_len(const char *string, size_t len)
 {
-	if (len + scratch_buffer.len > MAX_STRING_BUFFER - 1)
+	if (!scratch_buffer_may_append(len))
 	{
 		error_exit("Scratch buffer size (%d chars) exceeded", MAX_STRING_BUFFER - 1);
 	}

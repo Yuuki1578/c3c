@@ -98,7 +98,7 @@ struct Foo
 alias getValueInt = test2::getValue{int};
 alias getValueDouble = test2::getValue{double};
 alias IntBlob = test2::Blob{int};
-alias DoubleBlob = Blob{double};
+alias DoubleBlob = test2::Blob{double};
 alias getMultInt = test2::getMult{int};
 alias getMultDouble = test2::getMult{double};
 
@@ -237,11 +237,11 @@ fn Type getValue(Blob blob)
 %List = type { i64, i64, %any, ptr }
 %Foo = type { i32, i32 }
 
-@"$ct.test.Bobo" = linkonce global %.introspect { i8 9, i64 0, ptr null, i64 20, i64 0, i64 6, [0 x i64] zeroinitializer }, align 8
-@"$ct.test.Blob" = linkonce global %.introspect { i8 9, i64 0, ptr null, i64 8, i64 0, i64 2, [0 x i64] zeroinitializer }, align 8
-@"$ct.test.Foor" = linkonce global %.introspect { i8 10, i64 0, ptr null, i64 16, i64 0, i64 2, [0 x i64] zeroinitializer }, align 8
-@"$ct.test.Foo2" = linkonce global %.introspect { i8 9, i64 0, ptr null, i64 4, i64 0, i64 1, [0 x i64] zeroinitializer }, align 8
-@"$ct.test.Foo" = linkonce global %.introspect { i8 9, i64 0, ptr null, i64 8, i64 0, i64 2, [0 x i64] zeroinitializer }, align 8
+@"$ct.test.Bobo" = linkonce global %.introspect { i8 10, i64 0, ptr null, i64 20, i64 0, i64 6, [0 x i64] zeroinitializer }, align 8
+@"$ct.test.Blob" = linkonce global %.introspect { i8 10, i64 0, ptr null, i64 8, i64 0, i64 2, [0 x i64] zeroinitializer }, align 8
+@"$ct.test.Foor" = linkonce global %.introspect { i8 11, i64 0, ptr null, i64 16, i64 0, i64 2, [0 x i64] zeroinitializer }, align 8
+@"$ct.test.Foo2" = linkonce global %.introspect { i8 10, i64 0, ptr null, i64 4, i64 0, i64 1, [0 x i64] zeroinitializer }, align 8
+@"$ct.test.Foo" = linkonce global %.introspect { i8 10, i64 0, ptr null, i64 8, i64 0, i64 2, [0 x i64] zeroinitializer }, align 8
 @"$ct.int" = linkonce global %.introspect { i8 2, i64 0, ptr null, i64 4, i64 0, i64 0, [0 x i64] zeroinitializer }, align 8
 @"$ct.test.MyEnum" = linkonce global { i8, i64, ptr, i64, i64, i64, [3 x %"char[]"] } { i8 8, i64 0, ptr null, i64 4, i64 ptrtoint (ptr @"$ct.int" to i64), i64 3, [3 x %"char[]"] [%"char[]" { ptr @.enum.HELO, i64 4 }, %"char[]" { ptr @.enum.WORLD, i64 5 }, %"char[]" { ptr @.enum.BYE, i64 3 }] }, align 8
 @test_static.x = internal unnamed_addr global i32 1, align 4
@@ -292,7 +292,7 @@ entry:
   %c = alloca %Bobo, align 4
   %indirectarg = alloca %Bobo, align 8
   call void @llvm.memcpy.p0.p0.i32(ptr align 4 %de, ptr align 4 @.__const, i32 12, i1 false)
-  call void @llvm.memcpy.p0.p0.i32(ptr align 4 %c, ptr align 4 %1, i32 20, i1 false)
+  call void @llvm.memcpy.p0.p0.i32(ptr align 4 %c, ptr align 8 %1, i32 20, i1 false)
   call void @llvm.memcpy.p0.p0.i32(ptr align 8 %indirectarg, ptr align 4 %c, i32 20, i1 false)
   %2 = call i32 @test.helo(double 1.000000e+00, ptr byval(%Bobo) align 8 %indirectarg)
   ret i32 1
@@ -452,9 +452,9 @@ loop.exit:                                        ; preds = %loop.cond
   store i32 3, ptr %elements, align 4
   %11 = call i32 (ptr, ...) @printf(ptr @.str.4)
   call void @llvm.memset.p0.i64(ptr align 8 %array, i8 0, i64 40, i1 false)
-  call void @"std_collections_list$int$.List.push"(ptr %array, i32 100)
-  call void @"std_collections_list$int$.List.push"(ptr %array, i32 200)
-  call void @"std_collections_list$int$.List.push"(ptr %array, i32 400)
+  call void @"std_collections_list$int$.List.push"(ptr %array, i32 100) #3
+  call void @"std_collections_list$int$.List.push"(ptr %array, i32 200) #3
+  call void @"std_collections_list$int$.List.push"(ptr %array, i32 400) #3
   call void @"std_collections_list$int$.List.push"(ptr %array, i32 600) #3
   call void @"std_collections_list$int$.List.insert_at"(ptr %array, i64 2, i32 300)
   store i32 0, ptr %i1, align 4
@@ -520,7 +520,7 @@ loop.exit8:                                       ; preds = %loop.cond2
   %hi = load i64, ptr %ptradd10, align 8
   %42 = call i32 @test.sum_us(ptr %lo, i64 %hi)
   %43 = call i32 (ptr, ...) @printf(ptr @.str.17, i32 %42)
-  store i32 1, ptr %varargslots, align 4
+  store i32 1, ptr %varargslots, align 16
   %ptradd11 = getelementptr inbounds i8, ptr %varargslots, i64 4
   store i32 2, ptr %ptradd11, align 4
   %ptradd12 = getelementptr inbounds i8, ptr %varargslots, i64 8

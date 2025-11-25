@@ -34,6 +34,7 @@ faultdef
 	CHANNEL_CLOSED;
 
 macro void? Mutex.init(&mutex) => NativeMutex.init((NativeMutex*)mutex, {});
+macro bool Mutex.is_initialized(mutex) => ((NativeMutex*)&mutex).is_initialized();
 macro void? RecursiveMutex.init(&mutex) => NativeMutex.init((NativeMutex*)mutex, {.recursive});
 macro void? Mutex.destroy(&mutex) => NativeMutex.destroy((NativeMutex*)mutex);
 macro void? Mutex.lock(&mutex) => NativeMutex.lock((NativeMutex*)mutex);
@@ -47,6 +48,11 @@ macro void? TimedMutex.lock(&mutex) => NativeTimedMutex.lock((NativeTimedMutex*)
 macro void? TimedMutex.lock_timeout(&mutex, ulong ms) => NativeTimedMutex.lock_timeout((NativeTimedMutex*)mutex, ms);
 macro bool  TimedMutex.try_lock(&mutex) => NativeTimedMutex.try_lock((NativeTimedMutex*)mutex);
 macro void? TimedMutex.unlock(&mutex) => NativeTimedMutex.unlock((NativeTimedMutex*)mutex);
+
+macro void fence(AtomicOrdering $ordering) @safemacro
+{
+	$$fence($ordering.ordinal);
+}
 
 macro void Mutex.@in_lock(&mutex; @body)
 {
@@ -63,12 +69,37 @@ macro void? ConditionVariable.wait(&cond, Mutex* mutex)
 {
 	return NativeConditionVariable.wait((NativeConditionVariable*)cond, (NativeMutex*)mutex);
 }
-macro void? ConditionVariable.wait_timeout(&cond, Mutex* mutex, ulong ms)
+<*
+ @require $defined(Duration d = #ms_or_duration) ||| $defined(ulong l = #ms_or_duration)
+ @return? thread::WAIT_TIMEOUT, thread::WAIT_FAILED
+*>
+macro void? ConditionVariable.wait_timeout(&cond, Mutex* mutex, #ms_or_duration) @safemacro
 {
-	return NativeConditionVariable.wait_timeout((NativeConditionVariable*)cond, (NativeMutex*)mutex, ms);
+	$if $defined(*&&(Duration){} = #ms_or_duration):
+		return NativeConditionVariable.wait_timeout_duration((NativeConditionVariable*)cond, (NativeMutex*)mutex, #ms_or_duration);
+	$else
+		return NativeConditionVariable.wait_timeout((NativeConditionVariable*)cond, (NativeMutex*)mutex, #ms_or_duration);
+	$endif
 }
 
-macro void? Thread.create(&thread, ThreadFn thread_fn, void* arg) => NativeThread.create(thread, thread_fn, arg);
+<*
+ @return? thread::WAIT_TIMEOUT, thread::WAIT_FAILED
+*>
+macro void? ConditionVariable.wait_until(&cond, Mutex* mutex, Time time)
+{
+	return NativeConditionVariable.wait_until((NativeConditionVariable*)cond, (NativeMutex*)mutex, time);
+}
+
+<*
+ Create and start a thread.
+
+ @require thread_fn != null : "A non null thread function is required"
+*>
+macro void? Thread.create(&thread, ThreadFn thread_fn, void* arg)
+{
+	return NativeThread.create(thread, thread_fn, arg);
+}
+
 macro void? Thread.detach(thread) => NativeThread.detach(thread);
 macro int? Thread.join(thread) => NativeThread.join(thread);
 macro bool Thread.equals(thread, Thread other) => NativeThread.equals(thread, other);

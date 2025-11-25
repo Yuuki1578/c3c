@@ -89,7 +89,7 @@ const char **get_string_array(BuildParseContext context, JSONObject *table, cons
 		return NULL;
 	}
 	if (value->type != J_ARRAY) goto NOT_ARRAY;
-	const char **values = NULL;
+	const char **values = VECNEW(const char *, 16);
 	FOREACH(JSONObject *, val, value->elements)
 	{
 		if (val->type != J_STRING) goto NOT_ARRAY;
@@ -109,15 +109,16 @@ const char **get_optional_string_array(BuildParseContext context, JSONObject *ta
 const char *get_cflags(BuildParseContext context, JSONObject *json, const char *original_flags)
 {
 	// CFlags
-	const char *cflags = get_optional_string(context, json, context.target ? "cflags-override" : "cflags");
-	return cflags ? cflags : original_flags;
+	if (context.target)
+	{
+		const char *cflags = get_optional_string(context, json, "cflags-override");
+		if (cflags) return cflags;
+	}
+	const char *cflags = get_optional_string(context, json, "cflags");
+	if (!cflags) return original_flags;
+	if (!original_flags) return cflags;
+	return str_printf("%s %s", original_flags, cflags);
 }
-
-INLINE void append_strings_to_strings(const char*** list_of_strings_ptr, const char **strings_to_append)
-{
-	FOREACH(const char *, string, strings_to_append) vec_add(*list_of_strings_ptr, string);
-}
-
 
 void get_list_append_strings(BuildParseContext context, JSONObject *json, const char ***list_ptr, const char *base, const char *override)
 {
@@ -148,6 +149,7 @@ int get_valid_string_setting(BuildParseContext context, JSONObject *json, const 
 		error_exit("In file '%s': '%s' had an invalid value for '%s', expected %s", context.file, context.target, key, expected);
 	}
 	error_exit("In file '%s': Invalid value for '%s', expected %s", context.file, key, expected);
+	UNREACHABLE
 }
 
 int get_valid_enum_from_string(const char *str, const char *target, const char **values, int count, const char *expected)
@@ -159,6 +161,7 @@ int get_valid_enum_from_string(const char *str, const char *target, const char *
 		error_exit("'%s' had an invalid value, expected %s", target, expected);
 	}
 	error_exit("Invalid value, expected %s", expected);
+	UNREACHABLE
 }
 
 long get_valid_integer(BuildParseContext context, JSONObject *table, const char *key, bool mandatory)

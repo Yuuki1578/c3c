@@ -144,6 +144,17 @@ typedef enum
 
 typedef enum
 {
+	TESTLOGLEVEL_NOT_SET = -1,
+	TESTLOGLEVEL_VERBOSE = 0,
+	TESTLOGLEVEL_DEBUG = 1,
+	TESTLOGLEVEL_INFO = 2,
+	TESTLOGLEVEL_WARN = 3,
+	TESTLOGLEVEL_ERROR = 4,
+	TESTLOGLEVEL_CRITICAL = 5,
+} TestLogLevel;
+
+typedef enum
+{
 	PANIC_NOT_SET = -1,
 	PANIC_OFF = 0,
 	PANIC_ON = 1,
@@ -287,6 +298,17 @@ typedef enum
 	X86CPU_NATIVE = 7,
 } X86CpuSet;
 
+
+typedef enum
+{
+	RISCV_CPU_DEFAULT = -1,
+	RISCV_CPU_RVI = 0,
+	RISCV_CPU_RVIMAC = 1,
+	RISCV_CPU_RVIMAFC = 2,
+	RISCV_CPU_RVGC = 3,
+	RISCV_CPU_RVGCV = 4,
+} RiscvCpuSet;
+
 typedef enum
 {
 	FP_DEFAULT = -1,
@@ -297,11 +319,11 @@ typedef enum
 
 typedef enum
 {
-	RISCVFLOAT_DEFAULT = -1,
-	RISCVFLOAT_NONE = 0,
-	RISCVFLOAT_FLOAT = 1,
-	RISCVFLOAT_DOUBLE = 2,
-} RiscvFloatCapability;
+	RISCV_ABI_DEFAULT = -1,
+	RISCV_ABI_INT_ONLY = 0,
+	RISCV_ABI_FLOAT = 1,
+	RISCV_ABI_DOUBLE = 2,
+} RiscvAbi;
 
 typedef enum
 {
@@ -484,6 +506,7 @@ typedef struct BuildOptions_
 		int api_version;
 	} android;
 	int build_threads;
+	const char *echo_prefix;
 	const char **libraries_to_fetch;
 	const char **files;
 	const char *test_filter;
@@ -491,6 +514,7 @@ typedef struct BuildOptions_
 	const char **feature_names;
 	const char **removed_feature_names;
 	const char *output_name;
+	const char *runner_output_name;
 	const char *project_name;
 	const char *target_select;
 	const char *path;
@@ -499,12 +523,13 @@ typedef struct BuildOptions_
 	const char **unchecked_directories;
 	LinkerType linker_type;
 	ValidationLevel validation_level;
+	TestLogLevel test_log_level;
 	Ansi ansi;
 	bool test_breakpoint;
 	bool test_quiet;
 	bool test_nosort;
 	bool test_noleak;
-	bool test_nocapture;
+	bool test_show_output;
 	const char *custom_linker_path;
 	uint32_t symtab_size;
 	unsigned version;
@@ -553,6 +578,8 @@ typedef struct BuildOptions_
 	bool run_once;
 	bool suppress_run;
 	bool old_slice_copy;
+	bool old_enums;
+	bool old_compact_eq;
 	int verbosity_level;
 	const char *panicfn;
 	const char *benchfn;
@@ -565,9 +592,11 @@ typedef struct BuildOptions_
 	const char *header_out;
 	const char *obj_out;
 	const char *script_dir;
+	const char **emit_only;
 	RelocModel reloc_model;
 	X86VectorCapability x86_vector_capability;
 	X86CpuSet x86_cpu_set;
+	RiscvCpuSet riscv_cpu_set;
 	Win64Simd win_64_simd;
 	WinDebug win_debug;
 	FpOpt fp_math;
@@ -577,10 +606,13 @@ typedef struct BuildOptions_
 	StripUnused strip_unused;
 	OptimizationLevel optlevel;
 	SizeOptimizationLevel optsize;
-	RiscvFloatCapability riscv_float_capability;
+	RiscvAbi riscv_abi;
 	MemoryEnvironment memory_environment;
 	SanitizeMode sanitize_mode;
 	uint32_t max_vector_size;
+	uint32_t max_stack_object_size;
+	const char *cpu_flags;
+	uint32_t max_macro_iterations;
 	bool print_keywords;
 	bool print_attributes;
 	bool print_builtins;
@@ -591,9 +623,16 @@ typedef struct BuildOptions_
 	bool print_precedence;
 	bool print_linking;
 	bool print_env;
+	bool print_asm;
 	bool benchmarking;
 	bool testing;
 } BuildOptions;
+
+typedef struct
+{
+	const char *author;
+	const char *email;
+} AuthorEntry;
 
 typedef struct
 {
@@ -616,6 +655,7 @@ typedef struct Library__
 {
 	const char *dir;
 	const char *provides;
+	const char *linklib_dir;
 	const char **dependencies;
 	const char **execs;
 	const char *cc;
@@ -634,7 +674,9 @@ typedef struct
 	Library **library_list;
 	LibraryTarget **ccompiling_libraries;
 	const char *name;
+	const char *runner_output_name;
 	const char *output_name;
+	const char *extension;
 	const char *version;
 	const char *langrev;
 	const char **source_dirs;
@@ -646,6 +688,7 @@ typedef struct
 	const char **linker_libdirs;
 	const char **linker_libs;
 	const char *cpu;
+	const char *echo_prefix;
 	const char **link_args;
 	const char *build_dir;
 	const char *object_file_dir;
@@ -655,6 +698,7 @@ typedef struct
 	const char *header_file_dir;
 	const char *script_dir;
 	const char *run_dir;
+	const char **emit_only;
 	bool is_non_project;
 	bool run_after_compile;
 	bool delete_after_run;
@@ -684,6 +728,9 @@ typedef struct
 	bool silence_deprecation;
 	bool print_stats;
 	bool old_slice_copy;
+	bool old_enums;
+	bool old_compact_eq;
+	bool single_threaded;
 	int build_threads;
 	TrustLevel trust_level;
 	OptimizationSetting optsetting;
@@ -706,8 +753,11 @@ typedef struct
 	ArchOsTarget arch_os_target;
 	CompilerBackend backend;
 	LinkerType linker_type;
+	const char *cpu_flags;
 	uint32_t symtab_size;
 	uint32_t max_vector_size;
+	uint32_t max_stack_object_size;
+	uint32_t max_macro_iterations;
 	uint32_t switchrange_max_size;
 	uint32_t switchjump_max_size;
 	const char **args;
@@ -720,6 +770,7 @@ typedef struct
 	const char **csources;
 	const char **cinclude_dirs;
 	const char **exec;
+	AuthorEntry *authors;
 	const char **feature_list;
 	const char *custom_linker_path;
 	struct
@@ -728,7 +779,8 @@ typedef struct
 		SoftFloat soft_float : 3;
 		StructReturn x86_struct_return : 3;
 		X86VectorCapability x86_vector_capability : 4;
-		RiscvFloatCapability riscv_float_capability : 4;
+		RiscvAbi riscv_abi : 4;
+		RiscvCpuSet riscv_cpu_set : 4;
 		Win64Simd pass_win64_simd_as_arrays : 3;
 		bool trap_on_wrap : 1;
 		bool sanitize_address : 1;
@@ -777,6 +829,14 @@ static const char *x86_cpu_set[8] = {
 	[X86CPU_NATIVE] = "native"
 };
 
+static const char *riscv_cpu_set[5] = {
+	[RISCV_CPU_RVI] = "rvi", // NOLINT
+	[RISCV_CPU_RVIMAC] = "rvimac",
+	[RISCV_CPU_RVIMAFC] = "rvimafc",
+	[RISCV_CPU_RVGC] = "rvgc",
+	[RISCV_CPU_RVGCV] = "rvgcv",
+};
+
 static BuildTarget default_build_target = {
 		.is_non_project = true,
 		.optlevel = OPTIMIZATION_NOT_SET,
@@ -800,6 +860,7 @@ static BuildTarget default_build_target = {
 		.symtab_size = DEFAULT_SYMTAB_SIZE,
 		.reloc_model = RELOC_DEFAULT,
 		.cc = NULL,
+		.extension = NULL,
 		.version = "1.0.0",
 		.langrev = "1",
 		.cpu = "generic",
@@ -808,9 +869,10 @@ static BuildTarget default_build_target = {
 		.feature.soft_float = SOFT_FLOAT_DEFAULT,
 		.feature.fp_math = FP_DEFAULT,
 		.feature.trap_on_wrap = false,
-		.feature.riscv_float_capability = RISCVFLOAT_DEFAULT,
+		.feature.riscv_abi = RISCV_ABI_DEFAULT,
 		.feature.x86_vector_capability = X86VECTOR_DEFAULT,
 		.feature.x86_cpu_set = X86CPU_DEFAULT,
+		.feature.riscv_cpu_set = RISCV_CPU_DEFAULT,
 		.feature.win_debug = WIN_DEBUG_DEFAULT,
 		.feature.safe_mode = SAFETY_NOT_SET,
 		.feature.panic_level = PANIC_NOT_SET,
@@ -820,6 +882,7 @@ static BuildTarget default_build_target = {
 		.switchjump_max_size = DEFAULT_SWITCH_JUMP_MAX_SIZE,
 		.quiet = false,
 };
+
 
 extern const char *project_default_keys[][2];
 extern const int project_default_keys_count;

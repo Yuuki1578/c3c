@@ -1,6 +1,5 @@
-module std::core::mem::allocator;
+module std::core::mem::allocator @if(!(env::POSIX || env::WIN32) || !$feature(VMEM_TEMP));
 import std::io, std::math;
-import std::core::sanitizer::asan;
 
 // This implements the temp allocator.
 // The temp allocator is a specialized allocator only intended for use where
@@ -35,6 +34,9 @@ struct TempAllocator (Allocator)
 	TempAllocatorPage* last_page;
 	TempAllocator* derived;
 	bool allocated;
+	usz reserve_size;
+	usz realloc_size;
+	usz min_size;
 	usz used;
 	usz capacity;
 	usz original_capacity;
@@ -47,7 +49,7 @@ struct TempAllocatorChunk @local
 	char[*] data;
 }
 
-const usz PAGE_IS_ALIGNED @private = (usz)isz.max + 1u;
+const usz PAGE_IS_ALIGNED @local = (usz)isz.max + 1u;
 
 struct TempAllocatorPage
 {
@@ -62,15 +64,20 @@ macro usz TempAllocatorPage.pagesize(&self) => self.size & ~PAGE_IS_ALIGNED;
 macro bool TempAllocatorPage.is_aligned(&self) => self.size & PAGE_IS_ALIGNED == PAGE_IS_ALIGNED;
 
 <*
- @require size >= 16
+ @require size >= 64
+ @require realloc_size >= 64
  @require allocator.type != TempAllocator.typeid : "You may not create a temp allocator with a TempAllocator as the backing allocator."
+ @require min_size > TempAllocator.sizeof + 64 : "Min size must meaningfully hold the data + some bytes"
 *>
-fn TempAllocator*? new_temp_allocator(Allocator allocator, usz size)
+fn TempAllocator*? new_temp_allocator(Allocator allocator, usz size, usz reserve = temp_allocator_reserve_size, usz min_size = temp_allocator_min_size, usz realloc_size = temp_allocator_realloc_size)
 {
 	TempAllocator* temp = allocator::alloc_with_padding(allocator, TempAllocator, size)!;
 	temp.last_page = null;
 	temp.backing_allocator = allocator;
 	temp.used = 0;
+	temp.min_size = min_size;
+	temp.realloc_size = realloc_size;
+	temp.reserve_size = reserve;
 	temp.allocated = true;
 	temp.derived = null;
 	temp.original_capacity = temp.capacity = size;
@@ -78,19 +85,18 @@ fn TempAllocator*? new_temp_allocator(Allocator allocator, usz size)
 }
 <*
  @require !self.derived
- @require min_size > TempAllocator.sizeof + 64 : "Min size must meaningfully hold the data + some bytes"
- @require mult > 0 : "The multiple can never be zero"
 *>
-fn TempAllocator*? TempAllocator.derive_allocator(&self, usz min_size, usz buffer, usz mult)
+fn TempAllocator*? TempAllocator.derive_allocator(&self, usz reserve = 0)
 {
+	if (!reserve) reserve = self.reserve_size;
 	usz remaining = self.capacity - self.used;
 	void* mem @noinit;
 	usz size @noinit;
-	if (min_size + buffer > remaining)
+	if (self.min_size + reserve > remaining)
 	{
-		return self.derived = new_temp_allocator(self.backing_allocator, min_size * mult)!;
+		return self.derived = new_temp_allocator(self.backing_allocator, self.realloc_size, self.reserve_size, self.min_size, self.realloc_size)!;
 	}
-	usz start = mem::aligned_offset(self.used + buffer, mem::DEFAULT_MEM_ALIGNMENT);
+	usz start = mem::aligned_offset(self.used + reserve, mem::DEFAULT_MEM_ALIGNMENT);
 	void* ptr = &self.data[start];
 	TempAllocator* temp = (TempAllocator*)ptr;
 	$if env::ADDRESS_SANITIZER:
@@ -99,6 +105,9 @@ fn TempAllocator*? TempAllocator.derive_allocator(&self, usz min_size, usz buffe
 	temp.last_page = null;
     temp.backing_allocator = self.backing_allocator;
     temp.used = 0;
+    temp.min_size = self.min_size;
+    temp.reserve_size = self.reserve_size;
+    temp.realloc_size = self.realloc_size;
     temp.allocated = false;
     temp.derived = null;
     temp.original_capacity = temp.capacity = self.capacity - start - TempAllocator.sizeof;
@@ -317,3 +326,81 @@ fn void*? TempAllocator.acquire(&self, usz size, AllocInitType init_type, usz al
 	return &page.data[0];
 }
 
+module std::core::mem::allocator @if((env::POSIX || env::WIN32) && $feature(VMEM_TEMP));
+import std::math;
+
+tlocal VmemOptions temp_allocator_default_options = {
+	.shrink_on_reset = env::MEMORY_ENV != NORMAL,
+	.protect_unused_pages = env::COMPILER_OPT_LEVEL <= O1 || env::COMPILER_SAFE_MODE,
+	.scratch_released_data = env::COMPILER_SAFE_MODE
+};
+
+
+fn TempAllocator*? new_temp_allocator(Allocator allocator, usz size, usz reserve = temp_allocator_reserve_size, usz min_size = temp_allocator_min_size, usz realloc_size = temp_allocator_realloc_size)
+{
+	Vmem mem;
+	TempAllocator* t = allocator::new(allocator, TempAllocator);
+	defer catch allocator::free(allocator, t);
+	t.vmem.init(preferred_size: isz.sizeof > 4 ? 4 * mem::GB : 512 * mem::MB,
+	            reserve_page_size: isz.sizeof > 4 ? 256 * mem::KB : 0,
+	            options: temp_allocator_default_options)!;
+	t.allocator = allocator;
+	return t;
+}
+
+struct TempAllocator (Allocator)
+{
+	Vmem vmem;
+	TempAllocator* derived;
+	Allocator allocator;
+}
+
+<*
+ @require size > 0
+ @require !alignment || math::is_power_of_2(alignment)
+ @require alignment <= mem::MAX_MEMORY_ALIGNMENT : `alignment too big`
+*>
+fn void*? TempAllocator.acquire(&self, usz size, AllocInitType init_type, usz alignment) @dynamic
+{
+	return self.vmem.acquire(size, init_type, alignment) @inline;
+}
+
+fn TempAllocator*? TempAllocator.derive_allocator(&self, usz reserve = 0)
+{
+	if (self.derived) return self.derived;
+	return self.derived = new_temp_allocator(self.allocator, 0)!;
+}
+
+<*
+ Reset the entire temp allocator, destroying all children
+*>
+fn void TempAllocator.reset(&self)
+{
+	TempAllocator* child = self.derived;
+	if (!child) return;
+	child.reset();
+	child.vmem.reset(0);
+}
+fn void TempAllocator.free(&self)
+{
+	self.destroy();
+}
+
+fn void TempAllocator.destroy(&self) @local
+{
+	TempAllocator* child = self.derived;
+	if (!child) return;
+	child.destroy();
+	self.vmem.free() @inline;
+	allocator::free(self.allocator, self) @inline;
+}
+
+fn void*? TempAllocator.resize(&self, void* pointer, usz size, usz alignment) @dynamic
+{
+	return self.vmem.resize(pointer, size, alignment) @inline;
+}
+
+fn void TempAllocator.release(&self, void* old_pointer, bool b) @dynamic
+{
+	self.vmem.release(old_pointer, b) @inline;
+}

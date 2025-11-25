@@ -96,13 +96,18 @@ macro bool is_subtype_of($Type, $OtherType)
 }
 macro bool is_numerical($Type)
 {
-	var $kind = $Type.kindof;
-	$if $kind == TypeKind.DISTINCT:
-		return is_numerical($typefrom($Type.inner));
-	$else
-		return $kind == TypeKind.SIGNED_INT || $kind == TypeKind.UNSIGNED_INT || $kind == TypeKind.FLOAT
-			|| $kind == TypeKind.VECTOR;
-	$endif
+	$switch $Type.kindof:
+		$case DISTINCT:
+		$case CONST_ENUM:
+			return is_numerical($Type.inner);
+		$case SIGNED_INT:
+		$case UNSIGNED_INT:
+		$case FLOAT:
+		$case VECTOR:
+			return true;
+		$default:
+			return false;
+	$endswitch
 }
 
 fn bool TypeKind.is_int(kind) @inline
@@ -110,7 +115,9 @@ fn bool TypeKind.is_int(kind) @inline
 	return kind == TypeKind.SIGNED_INT || kind == TypeKind.UNSIGNED_INT;
 }
 
-macro bool is_slice_convertable($Type)
+macro bool is_slice_convertable($Type) @deprecated("Use is_slice_convertible") => is_slice_convertible($Type);
+
+macro bool is_slice_convertible($Type)
 {
 	$switch $Type.kindof:
 		$case SLICE:
@@ -135,7 +142,7 @@ macro bool is_signed($Type) @const
 		$case FLOAT:
 			return true;
 		$case VECTOR:
-			return is_signed($typefrom($Type.inner));
+			return is_signed($Type.inner);
 		$default:
 			return false;
 	$endswitch
@@ -150,7 +157,7 @@ macro bool is_unsigned($Type) @const
 		$case UNSIGNED_INT:
 			return true;
 		$case VECTOR:
-			return is_unsigned($typefrom($Type.inner));
+			return is_unsigned($Type.inner);
 		$default:
 			return false;
 	$endswitch
@@ -158,8 +165,8 @@ macro bool is_unsigned($Type) @const
 
 macro typeid flat_type($Type) @const
 {
-	$if $Type.kindof == DISTINCT:
-		return flat_type($typefrom($Type.inner));
+	$if $Type.kindof == DISTINCT || $Type.kindof == CONST_ENUM:
+		return flat_type($Type.inner);
 	$else
 		return $Type.typeid;
 	$endif
@@ -167,8 +174,8 @@ macro typeid flat_type($Type) @const
 
 macro TypeKind flat_kind($Type) @const
 {
-	$if $Type.kindof == DISTINCT:
-		return flat_type($typefrom($Type.inner));
+	$if $Type.kindof == DISTINCT || $Type.kindof == CONST_ENUM:
+		return flat_type($Type.inner);
 	$else
 		return $Type.kindof;
 	$endif
@@ -182,6 +189,21 @@ macro bool is_indexable($Type) @const
 macro bool is_ref_indexable($Type) @const
 {
 	return $defined(&($Type){}[0]);
+}
+
+macro bool is_flat_intlike($Type) @const
+{
+	$switch $Type.kindof:
+		$case SIGNED_INT:
+		$case UNSIGNED_INT:
+			return true;
+		$case VECTOR:
+		$case DISTINCT:
+		$case CONST_ENUM:
+			return is_flat_intlike($Type.inner);
+		$default:
+			return false;
+	$endswitch
 }
 
 macro bool is_intlike($Type) @const
@@ -204,7 +226,7 @@ macro bool is_underlying_int($Type) @const
 		$case UNSIGNED_INT:
 			return true;
 		$case DISTINCT:
-			return is_underlying_int($typefrom($Type.inner));
+			return is_underlying_int($Type.inner);
 		$default:
 			return false;
 	$endswitch
@@ -231,8 +253,8 @@ macro bool is_vector($Type) @const
 
 macro typeid inner_type($Type) @const
 {
-	$if $Type.kindof == TypeKind.DISTINCT:
-		return inner_type($typefrom($Type.inner));
+	$if $Type.kindof == DISTINCT || $Type.kindof == CONST_ENUM:
+		return inner_type($Type.inner);
 	$else
 		return $Type.typeid;
 	$endif
@@ -272,6 +294,7 @@ macro bool may_load_atomic($Type) @const
 	$case FLOAT:
 		return true;
 	$case DISTINCT:
+	$case ENUM:
 		return may_load_atomic($Type.inner);
 	$default:
 		return false;
@@ -286,6 +309,7 @@ macro lower_to_atomic_compatible_type($Type) @const
 		$case UNSIGNED_INT:
 	        return $Type.typeid;
 		$case DISTINCT:
+		$case CONST_ENUM:
 			return lower_to_atomic_compatible_type($Type.inner);
 		$case FLOAT:
 			$switch $Type:
@@ -316,6 +340,8 @@ macro bool is_same_vector_type($Type1, $Type2) @const
 		return $Type1.inner == $Type2.inner && $Type1.len == $Type2.len;
 	$endif
 }
+
+macro bool has_equals($Type) @const => $defined(($Type){} == ($Type){});
 
 macro bool is_equatable_type($Type) @const
 {
@@ -359,6 +385,7 @@ enum TypeKind : char
 	FAULT,
 	ANY,
 	ENUM,
+	CONST_ENUM,
 	STRUCT,
 	UNION,
 	BITSTRUCT,

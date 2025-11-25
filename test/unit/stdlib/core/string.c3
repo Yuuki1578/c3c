@@ -30,19 +30,6 @@ fn void test_count()
 	assert(s2.count(" ") == 0);
 }
 
-fn void quick_zstr()
-{
-	String str = "1234";
-	ZString a = str.quick_zstr();
-	ZString b = str[0..2].quick_zstr();
-	ZString c = str[1..].quick_zstr();
-	String empty = {};
-	ZString d = empty.quick_zstr();
-	assert((void*)a == str.ptr);
-	assert((void*)b != str.ptr);
-	assert((void*)c == &str[1]);
-	assert(d[0] == 0);
-}
 
 fn void test_print_null()
 {
@@ -203,6 +190,19 @@ fn void test_treplace()
 	assert(test.treplace("Never", "Always") == "Befriend some dragons?");
 }
 
+fn void test_zstring()
+{
+	String test = "hello";
+	ZString test2 = "hello";
+	ZString test3 = "bye";
+	assert(test.zstr_tcopy() == test2);
+	assert(test.zstr_tcopy() != test3);
+	ZString null_string;
+	assert(test != null_string);
+	assert(null_string == null_string);
+	assert(null_string != test);
+}
+
 fn void test_replace()
 {
 	String test = "Befriend some dragons?";
@@ -255,7 +255,25 @@ fn void test_rindex_of_char()
 	assert(@catch(test.index_of_char('x')));
 }
 
-fn void test_base_13_convesion()
+fn void test_contains()
+{
+	String test = "hello world hello";
+	assert(test.contains("o"));
+	assert(test.contains("ll"));
+	assert(test.contains(" hello"));
+	assert(!test.contains("wi"));
+}
+
+fn void contains_char()
+{
+	String test = "hello world hello";
+	assert(test.contains_char('o'));
+	assert(test.contains_char('l'));
+	assert(test.contains_char('h'));
+	assert(!test.contains_char('x'));
+}
+
+fn void test_base_13_conversion()
 {
 	assert("13".to_long(13)!! == 13 + 3);
 	assert("1a".to_long(13)!! == 13 + 10);
@@ -305,4 +323,63 @@ fn void tokenize_all_skip_last()
         str.append("-");
 	}
 	test::eq(str.str_view(), "foo--bar-baz-");
+}
+
+fn void test_float()
+{
+	test::eq_approx(- 2.04632e-05," - 2.04632e-05   ".to_float()!!, delta: 0.00001e-5);
+	test::eq_approx(2.04632e-05," + 2.04632e-05   ".to_float()!!, delta: 0.00001e-5);
+}
+
+fn void test_pascal_to_snake()
+{
+	String[2][*] test_cases = {
+		{ "HTTPRequest2Handler", "http_request2_handler" },
+		{ "MyJSON2XMLConverter", "my_json2_xml_converter"},
+		{ "Foo3C3CBazHello", "foo3_c3_c_baz_hello" },
+		{ "TLAWithABCs", "tla_with_ab_cs" },
+		{ "HTMLToPDFConverter", "html_to_pdf_converter"},
+		{ "OAuth2Token", "o_auth2_token" },
+		{ "startMIDDLELast", "start_middle_last" }
+	};
+	foreach (s : test_cases)
+	{
+		test::eq(s[0].pascal_to_snake_copy(tmem), s[1]);
+	}
+}
+
+fn void test_snake_pascal()
+{
+	String[2][*] test_cases = {
+		{ "http_request2_handler", "HttpRequest2Handler", },
+		{ "my_json2_xml_converter", "MyJson2XmlConverter", },
+		{ "foo3_c3_c_baz_hello", "Foo3C3CBazHello",  },
+		{ "tla_with_ab_cs", "TlaWithAbCs",  },
+		{ "html_to_pdf_converter", "HtmlToPdfConverter", },
+		{ "o_auth2_token", "OAuth2Token",  },
+		{ "start_middle_last", "StartMiddleLast",  }
+	};
+	foreach (s : test_cases)
+	{
+		test::eq(s[0].snake_to_pascal_copy(tmem), s[1]);
+	}
+}
+
+fn void test_snake_pascal_self_modify()
+{
+	String[2][*] test_cases = {
+		{ "http_request2_handler", "HttpRequest2Handler", },
+		{ "my_json2_xml_converter", "MyJson2XmlConverter", },
+		{ "foo3_c3_c_baz_hello", "Foo3C3CBazHello",  },
+		{ "tla_with_ab_cs", "TlaWithAbCs",  },
+		{ "html_to_pdf_converter", "HtmlToPdfConverter", },
+		{ "o_auth2_token", "OAuth2Token",  },
+		{ "start_middle_last", "StartMiddleLast",  }
+	};
+	foreach (s : test_cases)
+	{
+		String s2 = s[0].tcopy();
+		s2.convert_snake_to_pascal();
+		test::eq(s2, s[1]);
+	}
 }

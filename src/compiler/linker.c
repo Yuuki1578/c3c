@@ -47,6 +47,7 @@ static const char *ld_target(ArchType arch_type)
 		default:
 			error_exit("Architecture currently not available for cross linking.");
 	}
+	UNREACHABLE
 }
 
 static void linker_setup_windows(const char ***args_ref, Linker linker_type, const char *output_file)
@@ -69,7 +70,7 @@ static void linker_setup_windows(const char ***args_ref, Linker linker_type, con
 			is_debug = true;
 			break;
 		default:
-			UNREACHABLE
+			UNREACHABLE_VOID
 	}
 	if (!link_libc()) return;
 	bool link_with_dynamic_debug_libc = true;
@@ -111,7 +112,7 @@ static void linker_setup_windows(const char ***args_ref, Linker linker_type, con
 					scratch_buffer_append("/x86");
 					break;
 				default:
-					UNREACHABLE
+					UNREACHABLE_VOID
 			}
 			if (file_exists(scratch_buffer_to_string()))
 			{
@@ -268,7 +269,7 @@ static void linker_setup_macos(const char ***args_ref, Linker linker_type)
 		error_exit("Cannot crosslink MacOS without providing --macossdk.");
 	}
 	linking_add_link(&compiler.linking, "System");
-	linking_add_link(&compiler.linking, "m");
+	if (compiler.linking.link_math) linking_add_link(&compiler.linking, "m");
 	add_plain_arg("-syslibroot");
 	add_quote_arg(compiler.build.macos.sysroot);
 	if (is_no_pie(compiler.platform.reloc_model)) add_plain_arg("-no_pie");
@@ -407,7 +408,7 @@ static void linker_setup_linux(const char ***args_ref, Linker linker_type, bool 
 			add_plain_arg("-nostdlib");
 			return;
 		}
-		linking_add_link(&compiler.linking, "m");
+		if (compiler.linking.link_math) linking_add_link(&compiler.linking, "m");
 		if (compiler.build.debug_info == DEBUG_INFO_FULL)
 		{
 			add_plain_arg("-rdynamic");
@@ -452,7 +453,7 @@ static void linker_setup_linux(const char ***args_ref, Linker linker_type, bool 
 	add_concat_file_arg(crt_dir, "crtn.o");
 	add_concat_quote_arg("-L", crt_dir);
 	add_plain_arg("--dynamic-linker=/lib64/ld-linux-x86-64.so.2");
-	linking_add_link(&compiler.linking, "m");
+	if (compiler.linking.link_math) linking_add_link(&compiler.linking, "m");
 	linking_add_link(&compiler.linking, "pthread");
 	linking_add_link(&compiler.linking, "c");
 	add_plain_arg("-L/usr/lib/");
@@ -463,6 +464,11 @@ static void linker_setup_linux(const char ***args_ref, Linker linker_type, bool 
 
 static void linker_setup_android(const char ***args_ref, Linker linker_type, bool is_dylib)
 {
+	if (!compiler.build.android.ndk_path)
+	{
+		linker_setup_linux(args_ref, linker_type, is_dylib);
+		return;
+	}
 #ifdef __linux__
 	#define ANDROID_HOST_TAG "linux-x86_64"
 #elif __APPLE__
@@ -523,15 +529,21 @@ static void linker_setup_android(const char ***args_ref, Linker linker_type, boo
 	add_plain_arg(scratch_buffer_copy());
 
 	add_plain_arg("-ldl");
-	add_plain_arg("-lm");
+	if (compiler.linking.link_math) add_plain_arg("-lm");
 	add_plain_arg("-lc");
 }
 
 static void linker_setup_freebsd(const char ***args_ref, Linker linker_type, bool is_dylib)
 {
-	if (linker_type == LINKER_CC) {
-		linking_add_link(&compiler.linking, "m");
+	if (linker_type == LINKER_CC)
+	{
+		if (compiler.linking.link_math) linking_add_link(&compiler.linking, "m");
 		linking_add_link(&compiler.linking, "pthread");
+		linking_add_link(&compiler.linking, "execinfo"); // for backtrace
+		if (compiler.build.debug_info == DEBUG_INFO_FULL)
+		{
+			add_plain_arg("-rdynamic");
+		}
 		return;
 	}
 	if (is_no_pie(compiler.platform.reloc_model)) add_plain_arg("-no-pie");
@@ -568,7 +580,7 @@ static void linker_setup_freebsd(const char ***args_ref, Linker linker_type, boo
 	add_concat_quote_arg("-L", crt_dir);
 	add_plain_arg("--dynamic-linker=/libexec/ld-elf.so.1");
 	linking_add_link(&compiler.linking, "c");
-	linking_add_link(&compiler.linking, "m");
+	if (compiler.linking.link_math) linking_add_link(&compiler.linking, "m");
 	linking_add_link(&compiler.linking, "gcc");
 	linking_add_link(&compiler.linking, "gcc_s");
 
@@ -670,7 +682,7 @@ static bool linker_setup(const char ***args_ref, const char **files_to_link, uns
 		case OS_TYPE_TVOS:
 		case OS_TYPE_WASI:
 			break;
-		case OS_TYPE_FREE_BSD:
+		case OS_TYPE_FREEBSD:
 		case OS_TYPE_OPENBSD:
 		case OS_TYPE_NETBSD:
 			linker_setup_freebsd(args_ref, linker_type, is_dylib);
@@ -750,7 +762,7 @@ static void append_fpie_pic_options(RelocModel reloc, const char ***args_ref)
 	switch (reloc)
 	{
 		case RELOC_DEFAULT:
-			UNREACHABLE
+			UNREACHABLE_VOID
 		case RELOC_NONE:
 			add_plain_arg("-fno-pic");
 			break;
@@ -777,7 +789,7 @@ Linker linker_find_linker_type(void)
 		case OS_UNSUPPORTED:
 		case OS_TYPE_UNKNOWN:
 		case OS_TYPE_NONE:
-		case OS_TYPE_FREE_BSD:
+		case OS_TYPE_FREEBSD:
 		case OS_TYPE_LINUX:
 		case OS_TYPE_NETBSD:
 		case OS_TYPE_OPENBSD:
@@ -996,7 +1008,7 @@ const char *cc_compiler(const char *cc, const char *file, const char *flags, con
 	if (!dir) dir = compiler.build.build_dir;
 	if (output_subdir) dir = dir ? file_append_path(dir, output_subdir) : output_subdir;
 	if (dir) dir_make(dir);
-	bool is_cl_exe = str_eq(cc, "cl.exe");
+	bool is_cl_exe = str_ends_with(cc, "cl.exe");
 	char *filename = NULL;
 	bool split_worked = file_namesplit(file, &filename, NULL);
 	if (!split_worked) error_exit("Cannot compile '%s'", file);
@@ -1018,6 +1030,8 @@ const char *cc_compiler(const char *cc, const char *file, const char *flags, con
 	const char **parts = NULL;
 	const char ***args_ref = &parts;
 	add_quote_arg(cc);
+
+	if (is_cl_exe) add_plain_arg("/nologo");
 
 	FOREACH(const char *, include_dir, include_dirs)
 	{
@@ -1047,6 +1061,17 @@ const char *cc_compiler(const char *cc, const char *file, const char *flags, con
 		add_plain_arg("-o");
 		add_quote_arg(out_name);
 	}
+
+#if PLATFORM_WINDOWS
+	if (is_cl_exe)
+	{
+		WindowsSDK *sdk = windows_get_sdk();
+		if (sdk && sdk->cl_include_env)
+		{
+			_putenv_s("INCLUDE", sdk->cl_include_env);
+		}
+	}
+#endif
 
 	const char *output = assemble_linker_command(parts, PLATFORM_WINDOWS);
 	DEBUG_LOG("Compiling c sources using '%s'", output);
@@ -1121,7 +1146,7 @@ bool static_lib_linker(const char *output_file, const char **files, unsigned fil
 		case OS_TYPE_WIN32:
 			format = AR_COFF;
 			break;
-		case OS_TYPE_FREE_BSD:
+		case OS_TYPE_FREEBSD:
 		case OS_TYPE_NETBSD:
 		case OS_TYPE_OPENBSD:
 			format = AR_BSD;

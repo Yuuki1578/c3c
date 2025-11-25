@@ -68,27 +68,33 @@ static void sema_trace_stmt_chain_liveness(AstId astid)
 	}
 	REMINDER("Optimize to ignore after return");
 }
+static void sema_trace_expr_asm_arg(ExprAsmArg *arg)
+{
+	switch (arg->kind)
+	{
+		case ASM_ARG_ADDR:
+			sema_trace_exprid_liveness(arg->base);
+			sema_trace_exprid_liveness(arg->idx);
+			return;
+		case ASM_ARG_REG:
+		case ASM_ARG_INT:
+			return;
+		case ASM_ARG_MEMADDR:
+		case ASM_ARG_MEMVAR:
+		case ASM_ARG_REGVAR:
+			sema_trace_decl_liveness(arg->ident.ident_decl);
+			return;
+		case ASM_ARG_VALUE:
+			sema_trace_exprid_liveness(arg->expr_id);
+			return;
+	}
+	UNREACHABLE_VOID
+}
 static void sema_trace_asm_arg_list(ExprAsmArg **list)
 {
 	FOREACH(ExprAsmArg *, asm_arg, list)
 	{
-		switch (asm_arg->kind)
-		{
-			case ASM_ARG_ADDR:
-			case ASM_ARG_ADDROF:
-				TODO
-			case ASM_ARG_REG:
-			case ASM_ARG_INT:
-				continue;
-			case ASM_ARG_MEMVAR:
-			case ASM_ARG_REGVAR:
-				sema_trace_decl_liveness(asm_arg->ident.ident_decl);
-				continue;
-			case ASM_ARG_VALUE:
-				sema_trace_exprid_liveness(asm_arg->expr_id);
-				continue;
-		}
-		UNREACHABLE
+		sema_trace_expr_asm_arg(asm_arg);
 	}
 }
 
@@ -102,7 +108,7 @@ static void sema_trace_stmt_liveness(Ast *ast)
 		case AST_CONTRACT:
 		case AST_FOREACH_STMT:
 		case AST_CONTRACT_FAULT:
-			UNREACHABLE
+			UNREACHABLE_VOID
 		case AST_ASM_STMT:
 			sema_trace_expr_list_liveness(ast->asm_stmt.args);
 			return;
@@ -196,7 +202,7 @@ static void sema_trace_stmt_liveness(Ast *ast)
 			sema_trace_stmt_chain_liveness(ast->contbreak_stmt.defers);
 			return;
 	}
-	UNREACHABLE
+	UNREACHABLE_VOID
 }
 
 static void sema_trace_const_initializer_liveness(ConstInitializer *const_init)
@@ -245,7 +251,7 @@ static void sema_trace_const_initializer_liveness(ConstInitializer *const_init)
 			sema_trace_expr_liveness(const_init->init_value);
 			return;
 	}
-	UNREACHABLE
+	UNREACHABLE_VOID
 }
 
 
@@ -260,9 +266,10 @@ RETRY:
 		case EXPR_SUBSCRIPT_ASSIGN:
 		case EXPR_OPERATOR_CHARS:
 		case EXPR_MEMBER_GET:
+		case EXPR_MEMBER_SET:
 		case EXPR_NAMED_ARGUMENT:
 		case UNRESOLVED_EXPRS:
-			UNREACHABLE
+			UNREACHABLE_VOID
 		case EXPR_TWO:
 			sema_trace_expr_liveness(expr->two_expr.first);
 			sema_trace_expr_liveness(expr->two_expr.last);
@@ -285,20 +292,8 @@ RETRY:
 			expr = expr->access_resolved_expr.parent;
 			goto RETRY;
 		case EXPR_ASM:
-			switch (expr->expr_asm_arg.kind)
-			{
-				case ASM_ARG_REG:
-				case ASM_ARG_ADDROF:
-				case ASM_ARG_REGVAR:
-				case ASM_ARG_INT:
-				case ASM_ARG_MEMVAR:
-					return;
-				case ASM_ARG_VALUE:
-				case ASM_ARG_ADDR:
-					sema_trace_expr_liveness(exprptr(expr->expr_asm_arg.expr_id));
-					return;
-			}
-			UNREACHABLE
+			sema_trace_expr_asm_arg(&expr->expr_asm_arg);
+			return;
 		case EXPR_BINARY:
 		case EXPR_BITASSIGN:
 			sema_trace_expr_liveness(exprptr(expr->binary_expr.left));
@@ -406,7 +401,8 @@ RETRY:
 			sema_trace_expr_list_liveness(expr->expression_list);
 			return;
 		case EXPR_DESIGNATED_INITIALIZER_LIST:
-			sema_trace_expr_list_liveness(expr->designated_init_list);
+			sema_trace_expr_liveness(expr->designated_init.splat);
+			sema_trace_expr_list_liveness(expr->designated_init.list);
 			return;
 		case EXPR_IDENTIFIER:
 			sema_trace_decl_liveness(expr->ident_expr);
@@ -417,7 +413,7 @@ RETRY:
 			return;
 		}
 		case EXPR_LAMBDA:
-			UNREACHABLE
+			UNREACHABLE_VOID
 		case EXPR_MACRO_BLOCK:
 		{
 			FOREACH(Decl *, val, expr->macro_block.params) sema_trace_decl_liveness(val);
@@ -452,6 +448,8 @@ RETRY:
 			sema_trace_expr_liveness(exprptr(expr->slice_expr.expr));
 			switch (expr->slice_expr.range.range_type)
 			{
+				case RANGE_SINGLE_ELEMENT:
+					UNREACHABLE_VOID
 				case RANGE_CONST_RANGE:
 					return;
 				case RANGE_DYNAMIC:
@@ -463,7 +461,7 @@ RETRY:
 					sema_trace_expr_liveness(exprptr(expr->slice_expr.range.start));
 					return;
 			}
-			UNREACHABLE
+			UNREACHABLE_VOID
 		case EXPR_SUBSCRIPT:
 		case EXPR_SUBSCRIPT_ADDR:
 			sema_trace_expr_liveness(exprptr(expr->subscript_expr.expr));
@@ -509,7 +507,7 @@ RETRY:
 		case EXPR_LAST_FAULT:
 			return;
 	}
-	UNREACHABLE
+	UNREACHABLE_VOID
 }
 
 void sema_trace_liveness(void)
@@ -520,8 +518,9 @@ void sema_trace_liveness(void)
 	}
 	bool keep_tests = compiler.build.testing;
 	bool keep_benchmarks = compiler.build.benchmarking;
-	FOREACH(Decl *, function, compiler.context.method_extensions)
+	FOREACH(Decl *, function, compiler.context.method_extension_list)
 	{
+		if (function->decl_kind == DECL_MACRO) continue;
 		if (function->func_decl.attr_dynamic) function->no_strip = true;
 		if (function->is_export || function->no_strip) sema_trace_decl_liveness(function);
 	}
@@ -545,10 +544,6 @@ void sema_trace_liveness(void)
 			{
 				if (var->is_export || var->no_strip) sema_trace_decl_liveness(var);
 			}
-			FOREACH(Decl *, method, unit->local_method_extensions)
-			{
-				if (method->is_export || method->no_strip) sema_trace_decl_liveness(method);
-			}
 		}
 	}
 }
@@ -563,7 +558,9 @@ INLINE void sema_trace_enum_associated(Decl *decl)
 }
 INLINE void sema_trace_decl_dynamic_methods(Decl *decl)
 {
-	Decl **methods = decl->methods;
+	Methods *table = decl->method_table;
+	if (!table) return;
+	Decl **methods = table->methods;
 	unsigned method_count = vec_size(methods);
 	if (!method_count) return;
 	for (unsigned i = 0; i < method_count; i++)
@@ -591,7 +588,7 @@ RETRY:
 	{
 		case DECL_ERASED:
 			return;
-		case DECL_TYPEDEF:
+		case DECL_TYPE_ALIAS:
 			sema_trace_type_liveness(decl->type);
 			return;
 		case DECL_ALIAS:
@@ -601,34 +598,45 @@ RETRY:
 			sema_trace_decl_dynamic_methods(decl);
 			sema_trace_enum_associated(decl);
 			return;
-		case DECL_DISTINCT:
+		case DECL_TYPEDEF:
 			sema_trace_type_liveness(decl->distinct->type);
 			FALLTHROUGH;
+		case DECL_CONST_ENUM:
 		case DECL_BITSTRUCT:
-		case DECL_STRUCT:
-		case DECL_UNION:
 		case DECL_INTERFACE:
+		case DECL_UNION:
+			sema_trace_decl_dynamic_methods(decl);
+			return;
+		case DECL_STRUCT:
+			if (decl->is_substruct)
+			{
+				sema_trace_type_liveness(decl->strukt.members[0]->type);
+			}
 			sema_trace_decl_dynamic_methods(decl);
 			return;
 		case DECL_ENUM_CONSTANT:
-			sema_trace_expr_list_liveness(decl->enum_constant.args);
+			if (!decl->enum_constant.is_raw)
+			{
+				sema_trace_expr_list_liveness(decl->enum_constant.associated);
+			}
 			return;
 		case DECL_POISONED:
 		case DECL_ATTRIBUTE:
 		case DECL_FAULT:
 			return;
+		case DECL_ALIAS_PATH:
+		case DECL_BODYPARAM:
 		case DECL_CT_ASSERT:
 		case DECL_CT_ECHO:
 		case DECL_CT_EXEC:
-		case DECL_IMPORT:
 		case DECL_CT_INCLUDE:
+		case DECL_GROUP:
+		case DECL_IMPORT:
 		case DECL_LABEL:
 		case DECL_MACRO:
-		case DECL_BODYPARAM:
-		case DECL_GROUP:
-			UNREACHABLE
+			UNREACHABLE_VOID
 		case DECL_FNTYPE:
-			sema_trace_func_liveness(&decl->fntype_decl);
+			sema_trace_func_liveness(&decl->fntype_decl.signature);
 			return;
 		case DECL_FUNC:
 			sema_trace_func_liveness(&decl->func_decl.signature);
@@ -660,6 +668,6 @@ RETRY:
 			}
 			return;
 		case DECL_DECLARRAY:
-			UNREACHABLE
+			UNREACHABLE_VOID
 	}
 }

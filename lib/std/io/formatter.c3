@@ -19,7 +19,7 @@ alias FloatType = double;
 
 macro bool is_struct_with_default_print($Type)
 {
-	return $Type.kindof == STRUCT
+	return ($Type.kindof == STRUCT ||| $Type.kindof == BITSTRUCT)
 		&&& !$defined($Type.to_format)
 		&&& !$defined($Type.to_constant_string);
 }
@@ -27,7 +27,7 @@ macro bool is_struct_with_default_print($Type)
 <*
  Introspect a struct and print it to a formatter
 
- @require @typekind(value) == STRUCT : `This macro is only valid on macros`
+ @require $kindof(value) == STRUCT || $kindof(value) == BITSTRUCT : `This macro is only valid on macros`
 *>
 macro usz? struct_to_format(value, Formatter* f, bool $force_dump)
 {
@@ -40,8 +40,8 @@ macro usz? struct_to_format(value, Formatter* f, bool $force_dump)
         $if $member.nameof != "":
             total += f.printf("%s: ", $member.nameof)!;
 		$endif
-		$if ($force_dump &&& $member.typeid.kindof == STRUCT) |||
-			is_struct_with_default_print($typefrom($member.typeid)):
+		$if ($force_dump &&& ($member.typeid.kindof == STRUCT || $member.typeid.kindof == BITSTRUCT)) |||
+			is_struct_with_default_print($member.typeid):
 			total += struct_to_format($member.get(value), f, $force_dump)!;
 		$else
 			total += f.printf("%s", $member.get(value))!;
@@ -69,7 +69,6 @@ struct Formatter
 		PrintFlags flags;
 		uint width;
 		uint prec;
-		usz idx;
 		fault first_fault;
 	}
 }
@@ -142,15 +141,17 @@ fn usz? Formatter.out_str(&self, any arg) @private
 {
 	switch (arg.type.kindof)
 	{
-		case TYPEID:
-			return self.out_substr("typeid");
 		case VOID:
 			return self.out_substr("void");
 		case FAULT:
-			return self.out_substr((*(fault*)arg.ptr).nameof);
+			fault f = *(fault*)arg.ptr;
+			return self.out_substr(f ? f.nameof : "(empty-fault)");
 		case INTERFACE:
+			any a = *(any*)arg;
+			return a ? self.out_str(a) : self.out_substr("(empty-interface)");
 		case ANY:
-			return self.out_str(*(any*)arg);
+			any a = *(any*)arg;
+			return a ? self.out_str(a) : self.out_substr("(empty-any)");
 		case OPTIONAL:
 			unreachable();
 		case SIGNED_INT:
@@ -185,6 +186,8 @@ fn usz? Formatter.out_str(&self, any arg) @private
 	if (@catch(n) != NOT_FOUND) n!;
 	switch (arg.type.kindof)
 	{
+		case TYPEID:
+			return self.out_substr("typeid[")! + self.ntoa((iptr)*(typeid*)arg, false, 16)! + self.out_substr("]")!;
 		case ENUM:
 			usz i = types::any_to_enum_ordinal(arg, usz)!!;
 			assert(i < arg.type.names.len, "Illegal enum value found, numerical value was %d.", i);
@@ -205,6 +208,7 @@ fn usz? Formatter.out_str(&self, any arg) @private
 			}
 			self.width = 0;
 			return self.out_substr("0x")! + self.ntoa_any(arg, 16);
+		case CONST_ENUM:
 		case DISTINCT:
 			if (arg.type == String.typeid)
 			{
@@ -494,6 +498,11 @@ fn usz? Formatter.vprintf(&self, String format, any[] anys)
 							out = ((char*)current.ptr)[:current.type.sizeof];
 							break;
 						}
+						if (current.type.kindof == POINTER)
+						{
+							out = ((*(char**)current.ptr))[:current.type.inner.sizeof];
+							break;
+						}
 						total_len += self.out_substr("<INVALID>")!;
 						continue;
 				}
@@ -565,5 +574,5 @@ fn usz? Formatter.print(&self, String str)
 		self.out_fn = &out_null_fn;
 	}
 	foreach (c : str) self.out(c)!;
-	return self.idx;
+	return str.len;
 }

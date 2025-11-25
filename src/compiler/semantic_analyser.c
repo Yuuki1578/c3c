@@ -17,6 +17,7 @@ void context_change_scope_with_flags(SemaContext *context, ScopeFlags flags)
 	}
 
 	bool scope_is_dead = context->active_scope.is_dead;
+	bool scope_is_poisoned = context->active_scope.is_poisoned;
 	Ast *previous_defer = context->active_scope.in_defer;
 	AstId parent_defer = context->active_scope.defer_last;
 	unsigned last_local = context->active_scope.current_local;
@@ -34,10 +35,9 @@ void context_change_scope_with_flags(SemaContext *context, ScopeFlags flags)
 
 	unsigned label_start = new_label_scope ? last_local : context->active_scope.label_start;
 	context->active_scope = (DynamicScope) {
-			.scope_id = ++context->scope_id,
 			.allow_dead_code = false,
-			.jump_end = false,
 			.is_dead = scope_is_dead,
+			.is_poisoned = scope_is_poisoned,
 			.depth = depth,
 			.current_local = last_local,
 			.label_start = label_start,
@@ -46,10 +46,6 @@ void context_change_scope_with_flags(SemaContext *context, ScopeFlags flags)
 			.defer_start = parent_defer,
 			.flags = flags,
 	};
-	if (context->scope_id == 0)
-	{
-		FATAL_ERROR("Too many scopes.");
-	}
 }
 
 const char *context_filename(SemaContext *context)
@@ -74,8 +70,10 @@ void context_change_scope_for_label(SemaContext *context, DeclId label_id)
 	}
 }
 
-AstId context_get_defers(SemaContext *context, AstId defer_top, AstId defer_bottom, bool is_success)
+
+AstId context_get_defers(SemaContext *context, AstId defer_bottom, bool is_success)
 {
+	AstId defer_top = context->active_scope.defer_last;
 	AstId first = 0;
 	AstId *next = &first;
 	while (defer_bottom != defer_top)
@@ -97,7 +95,7 @@ AstId context_get_defers(SemaContext *context, AstId defer_top, AstId defer_bott
 void context_pop_defers(SemaContext *context, AstId *next)
 {
 	AstId defer_start = context->active_scope.defer_start;
-	if (next && !context->active_scope.jump_end)
+	if (next && !context->active_scope.end_jump.active)
 	{
 		AstId defer_current = context->active_scope.defer_last;
 		while (defer_current != defer_start)
@@ -114,6 +112,27 @@ void context_pop_defers(SemaContext *context, AstId *next)
 	}
 	context->active_scope.defer_last = defer_start;
 }
+
+void sema_add_methods_to_decl_stack(SemaContext *context, Decl *decl)
+{
+	if (!decl->method_table) return;
+	FOREACH(Decl *, func, decl->method_table->methods)
+	{
+		switch (func->visibility)
+		{
+			case VISIBLE_LOCAL:
+				if (context->unit != func->unit) continue;
+				break;
+			case VISIBLE_PRIVATE:
+				if (context->unit->module != func->unit->module) continue;
+				break;
+			default:
+				break;
+		}
+		sema_decl_stack_push(func);
+	}
+}
+
 
 
 void context_pop_defers_and_replace_ast(SemaContext *context, Ast *ast)
@@ -150,7 +169,7 @@ void sema_analyze_stage(Module *module, AnalysisStage stage)
 		switch (module->stage)
 		{
 			case ANALYSIS_NOT_BEGUN:
-				UNREACHABLE
+				UNREACHABLE_VOID
 			case ANALYSIS_MODULE_HIERARCHY:
 				sema_analyse_pass_module_hierarchy(module);
 				break;
@@ -218,41 +237,40 @@ static void register_generic_decls(CompilationUnit *unit, Decl **decls)
 {
 	FOREACH(Decl *, decl, decls)
 	{
-		if (decl->visibility == VISIBLE_LOCAL) continue;
 		decl->unit = unit;
 		switch (decl->decl_kind)
 		{
-			case DECL_ENUM_CONSTANT:
-			case DECL_DECLARRAY:
-			case DECL_ERASED:
-			case DECL_LABEL:
-				UNREACHABLE
-			case DECL_POISONED:
-			case DECL_IMPORT:
+			case DECL_ALIAS_PATH:
 			case DECL_CT_ASSERT:
 			case DECL_CT_ECHO:
-			case DECL_FNTYPE:
-			case DECL_CT_INCLUDE:
 			case DECL_CT_EXEC:
+			case DECL_CT_INCLUDE:
+			case DECL_FNTYPE:
+			case DECL_IMPORT:
+			case DECL_POISONED:
 				continue;
-			case DECL_ATTRIBUTE:
-				break;
 			case DECL_FAULT:
 				PRINT_ERROR_AT(decl, "Generic modules cannot use 'faultdef', place the declaration in a separate sub module or parent module instead.");
 				decl_poison(decl);
 				break;
 			case DECL_BODYPARAM:
+			case DECL_DECLARRAY:
+			case DECL_ENUM_CONSTANT:
+			case DECL_ERASED:
 			case DECL_GROUP:
-				UNREACHABLE
+			case DECL_LABEL:
+				UNREACHABLE_VOID
 			case DECL_ALIAS:
-			case DECL_DISTINCT:
-			case DECL_ENUM:
-			case DECL_STRUCT:
+			case DECL_ATTRIBUTE:
+			case DECL_BITSTRUCT:
+			case DECL_CONST_ENUM:
 			case DECL_TYPEDEF:
+			case DECL_ENUM:
+			case DECL_INTERFACE:
+			case DECL_STRUCT:
+			case DECL_TYPE_ALIAS:
 			case DECL_UNION:
 			case DECL_VAR:
-			case DECL_BITSTRUCT:
-			case DECL_INTERFACE:
 				break;
 			case DECL_MACRO:
 			case DECL_FUNC:
@@ -262,7 +280,7 @@ static void register_generic_decls(CompilationUnit *unit, Decl **decls)
 		htable_set(&unit->module->symbols, (void *)decl->name, decl);
 		if (decl->visibility == VISIBLE_PUBLIC)
 		{
-			global_context_add_generic_decl(decl);
+			global_context_add_decl(decl);
 		}
 	}
 }
@@ -448,7 +466,7 @@ void sema_analysis_run(void)
 
 	// All global defines are added to the std module
 	compiler.context.std_module_path = (Path) { .module = kw_std, .span = INVALID_SPAN, .len = (uint32_t) strlen(kw_std) };
-	compiler.context.std_module = (Module){ .name = &compiler.context.std_module_path };
+	compiler.context.std_module = (Module){ .name = &compiler.context.std_module_path, .short_path = compiler.context.std_module_path.module };
 	compiler.context.std_module.stage = ANALYSIS_LAST;
 	compiler.context.locals_list = NULL;
 
@@ -557,13 +575,29 @@ SemaContext *context_transform_for_eval(SemaContext *context, SemaContext *temp_
 	return temp_context;
 }
 
-void sema_print_inline(SemaContext *context)
+void sema_print_inline(SemaContext *context, SourceSpan original)
 {
 	if (!context) return;
 	InliningSpan *inlined_at = context->inlined_at;
+	SourceSpan last_span = INVALID_SPAN;
 	while (inlined_at)
 	{
-		sema_note_prev_at(inlined_at->span, "Inlined from here.");
+		if (inlined_at->span.a != original.a && inlined_at->span.a != last_span.a)
+		{
+			sema_note_prev_at(inlined_at->span, "Inlined from here.");
+			last_span = inlined_at->span;
+		}
+		inlined_at = inlined_at->prev;
+	}
+	InliningSpan span = context->compilation_unit->module->inlined_at;
+	if (span.span.a == INVALID_SPAN.a) return;
+	inlined_at = &span;
+	while (inlined_at)
+	{
+		if (inlined_at->span.a != original.a)
+		{
+			sema_note_prev_at(inlined_at->span, "Inlined from here.");
+		}
 		inlined_at = inlined_at->prev;
 	}
 }
@@ -574,7 +608,7 @@ void sema_error_at(SemaContext *context, SourceSpan span, const char *message, .
 	va_start(list, message);
 	sema_verror_range(span, message, list);
 	va_end(list);
-	sema_print_inline(context);
+	sema_print_inline(context, span);
 }
 
 bool sema_warn_at(SemaContext *context, SourceSpan span, const char *message, ...)
@@ -591,6 +625,6 @@ bool sema_warn_at(SemaContext *context, SourceSpan span, const char *message, ..
 		sema_verror_range(span, message, list);
 	}
 	va_end(list);
-	sema_print_inline(context);
+	sema_print_inline(context, span);
 	return is_warn;
 }

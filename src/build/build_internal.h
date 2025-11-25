@@ -50,7 +50,7 @@ static const char *optsizes[3] = {
 	[SIZE_OPTIMIZATION_TINY] = "tiny",
 };
 
-static const char *linker[3] = {
+static const char *linker_kind[3] = {
 	[LINKER_TYPE_BUILTIN] = "builtin",
 	[LINKER_TYPE_CC] = "cc",
 	[LINKER_TYPE_CUSTOM] = "custom"
@@ -62,11 +62,17 @@ static const char *on_off[2] = {
 };
 
 
-
+// DEPRECATED
 static const char *riscv_capability[3] = {
-	[RISCVFLOAT_NONE] = "none",
-	[RISCVFLOAT_FLOAT] = "float",
-	[RISCVFLOAT_DOUBLE] = "double",
+	[RISCV_ABI_INT_ONLY] = "none",
+	[RISCV_ABI_FLOAT] = "float",
+	[RISCV_ABI_DOUBLE] = "double",
+};
+
+static const char *riscv_abi[3] = {
+	[RISCV_ABI_INT_ONLY] = "int-only",
+	[RISCV_ABI_FLOAT] = "float",
+	[RISCV_ABI_DOUBLE] = "double",
 };
 
 static const char *win64_simd_type[2] = {
@@ -99,6 +105,15 @@ static const char *optlevels[4] = {
 	[OPTIMIZATION_LESS] = "less",
 	[OPTIMIZATION_MORE] = "more",
 	[OPTIMIZATION_AGGRESSIVE] = "max",
+};
+
+static const char *test_log_levels[6] = {
+	[TESTLOGLEVEL_VERBOSE] = "verbose",
+	[TESTLOGLEVEL_DEBUG] = "debug",
+	[TESTLOGLEVEL_INFO] = "info",
+	[TESTLOGLEVEL_WARN] = "warn",
+	[TESTLOGLEVEL_ERROR] = "error",
+	[TESTLOGLEVEL_CRITICAL] = "critical",
 };
 
 static const char *backends[3] = {
@@ -150,6 +165,11 @@ int get_valid_string_setting(BuildParseContext context, JSONObject *json, const 
 int get_valid_enum_from_string(const char *str, const char *target, const char **values, int count, const char *expected);
 void check_json_keys(const char *valid_keys[][2], size_t key_count, const char *deprecated_keys[], size_t deprecated_key_count, JSONObject *json, const char *target_name, const char *option);
 long get_valid_integer(BuildParseContext context, JSONObject *table, const char *key, bool mandatory);
+
+INLINE void append_strings_to_strings(const char*** list_of_strings_ptr, const char **strings_to_append)
+{
+	FOREACH(const char *, string, strings_to_append) vec_add(*list_of_strings_ptr, string);
+}
 
 #define APPEND_STRING_LIST(list__, string__) \
 get_list_append_strings(context, json, list__, string__, string__ "-override")

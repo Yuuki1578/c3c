@@ -1,4 +1,4 @@
-// Copyright (c) 2021 Christoffer Lerno. All rights reserved.
+// Copyright (c) 2021-2025 Christoffer Lerno. All rights reserved.
 // Use of this source code is governed by the MIT license
 // a copy of which can be found in the LICENSE_STDLIB file.
 module libc;
@@ -7,6 +7,9 @@ module libc;
 const int EXIT_FAILURE = 1;
 const int EXIT_SUCCESS = 0;
 const int RAND_MAX = 0x7fffffff;
+
+alias WChar @if(env::WIN32) = Char16;
+alias WChar @if(!env::WIN32) = Char32;
 
 struct DivResult
 {
@@ -97,7 +100,7 @@ extern fn CInt close(CInt fd) @if(!env::WIN32);
 extern fn double difftime(Time_t time1, Time_t time2) @if(!env::WIN32);
 extern fn DivResult div(CInt numer, CInt denom);
 extern fn void exit(CInt status);
-extern fn void _exit(CInt status) @extern("_Exit");
+extern fn void _exit(CInt status) @cname("_Exit");
 extern fn CInt fclose(CFile stream);
 extern fn CFile fdopen(CInt fd, ZString mode) @if(!env::WIN32);
 extern fn CInt feof(CFile stream);
@@ -148,6 +151,7 @@ extern fn void qsort(void* base, usz items, usz size, CompareFunction compare);
 extern fn CInt raise(CInt signal);
 extern fn CInt rand();
 extern fn isz read(Fd fd, void* buf, usz nbyte) @if(!env::WIN32);
+extern fn isz readlink(ZString pathname, char* buf, int bufsize) @if(!env::WIN32);
 extern fn void* realloc(void* ptr, usz size);
 extern fn CInt remove(ZString filename);
 extern fn CInt rename(ZString old_name, ZString new_name);
@@ -168,6 +172,7 @@ extern fn CInt strcmp(ZString str1, ZString str2);
 extern fn CInt strcoll(ZString str1, ZString str2);
 extern fn usz strcspn(ZString str1, ZString str2);
 extern fn ZString strcpy(ZString dst, ZString src);
+extern fn ZString strdup(ZString s);
 extern fn ZString strerror(CInt errn);
 extern fn usz strftime(char* dest, usz maxsize, ZString format, Tm* timeptr);
 extern fn usz strlen(ZString str);
@@ -206,9 +211,9 @@ const CInt STDOUT_FD = 1;
 const CInt STDERR_FD = 2;
 
 module libc @if(env::LINUX || env::ANDROID);
-extern CFile __stdin @extern("stdin");
-extern CFile __stdout @extern("stdout");
-extern CFile __stderr @extern("stderr");
+extern CFile __stdin @cname("stdin");
+extern CFile __stdout @cname("stdout");
+extern CFile __stderr @cname("stderr");
 extern fn usz malloc_usable_size(void* ptr);
 macro usz malloc_size(void* ptr) => malloc_usable_size(ptr);
 extern fn void* aligned_alloc(usz align, usz size);
@@ -254,115 +259,104 @@ macro CFile stdout() { return (CFile*)(uptr)STDOUT_FD; }
 macro CFile stderr() { return (CFile*)(uptr)STDERR_FD; }
 
 module libc @if(!env::LIBC);
+import std::core::mem;
 
-fn void longjmp(JmpBuf* buffer, CInt value) @weak @extern("longjmp") @nostrip
+
+fn void longjmp(JmpBuf* buffer, CInt value) @weak @cname("longjmp") @nostrip
 {
 	unreachable("longjmp unavailable");
 }
 
-fn CInt setjmp(JmpBuf* buffer) @weak @extern("setjmp") @nostrip
+fn CInt setjmp(JmpBuf* buffer) @weak @cname("setjmp") @nostrip
 {
 	unreachable("setjmp unavailable");
 }
 
-fn void* malloc(usz size) @weak @extern("malloc") @nostrip
+fn void* malloc(usz size) @weak @cname("malloc") @nostrip
 {
 	unreachable("malloc unavailable");
 }
-fn void* calloc(usz count, usz size) @weak @extern("calloc") @nostrip
+fn void* calloc(usz count, usz size) @weak @cname("calloc") @nostrip
 {
 	unreachable("calloc unavailable");
 }
-fn void* free(void*) @weak @extern("free")
+fn void* free(void*) @weak @cname("free")
 {
 	unreachable("free unavailable");
 }
 
-fn void* realloc(void* ptr, usz size) @weak @extern("realloc") @nostrip
+fn void* realloc(void* ptr, usz size) @weak @cname("realloc") @nostrip
 {
 	unreachable("realloc unavailable");
 }
 
-fn void* memcpy(void* dest, void* src, usz n) @weak @extern("memcpy") @nostrip
-{
-	for (usz i = 0; i < n; i++) ((char*)dest)[i] = ((char*)src)[i];
-	return dest;
-}
+alias memcpy = mem::__memcpy;
+alias memmove = mem::__memcpy;
+alias memset = mem::__memset;
 
-fn void* memmove(void* dest, void* src, usz n) @weak @extern("memmove") @nostrip
-{
-	return memcpy(dest, src, n) @inline;
-}
-
-fn void* memset(void* dest, CInt value, usz n) @weak @extern("memset") @nostrip
-{
-	for (usz i = 0; i < n; i++) ((char*)dest)[i] = (char)value;
-	return dest;
-}
-
-fn int fseek(CFile stream, SeekIndex offset, int whence) @weak @extern("fseek") @nostrip
+fn int fseek(CFile stream, SeekIndex offset, int whence) @weak @cname("fseek") @nostrip
 {
 	unreachable("'fseek' not available.");
 }
-fn CFile fopen(ZString filename, ZString mode) @weak @extern("fopen") @nostrip
+fn CFile fopen(ZString filename, ZString mode) @weak @cname("fopen") @nostrip
 {
 	unreachable("'fopen' not available.");
 }
 
-fn CFile freopen(ZString filename, ZString mode, CFile stream) @weak @extern("fopen") @nostrip
+fn CFile freopen(ZString filename, ZString mode, CFile stream) @weak @cname("fopen") @nostrip
 {
 	unreachable("'freopen' not available.");
 }
 
-fn usz fwrite(void* ptr, usz size, usz nmemb, CFile stream) @weak @extern("fwrite") @nostrip
+fn usz fwrite(void* ptr, usz size, usz nmemb, CFile stream) @weak @cname("fwrite") @nostrip
 {
 	unreachable("'fwrite' not available.");
 }
 
-fn usz fread(void* ptr, usz size, usz nmemb, CFile stream) @weak @extern("fread") @nostrip
+fn usz fread(void* ptr, usz size, usz nmemb, CFile stream) @weak @cname("fread") @nostrip
 {
 	unreachable("'fread' not available.");
 }
 
-fn CFile fclose(CFile) @weak @extern("fclose") @nostrip
+fn CFile fclose(CFile) @weak @cname("fclose") @nostrip
 {
 	unreachable("'fclose' not available.");
 }
 
-fn int fflush(CFile stream) @weak @extern("fflush") @nostrip
+fn int fflush(CFile stream) @weak @cname("fflush") @nostrip
 {
 	unreachable("'fflush' not available.");
 }
 
-fn int fputc(int c, CFile stream) @weak @extern("fputc") @nostrip
+fn int fputc(int c, CFile stream) @weak @cname("fputc") @nostrip
 {
 	unreachable("'fputc' not available.");
 }
 
-fn char* fgets(ZString str, int n, CFile stream) @weak @extern("fgets") @nostrip
+fn char* fgets(ZString str, int n, CFile stream) @weak @cname("fgets") @nostrip
 {
 	unreachable("'fgets' not available.");
 }
 
-fn int fgetc(CFile stream) @weak @extern("fgetc") @nostrip
+fn int fgetc(CFile stream) @weak @cname("fgetc") @nostrip
 {
 	unreachable("'fgetc' not available.");
 }
 
-fn int feof(CFile stream) @weak @extern("feof") @nostrip
+fn int feof(CFile stream) @weak @cname("feof") @nostrip
 {
 	unreachable("'feof' not available.");
 }
 
-fn int putc(int c, CFile stream) @weak @extern("putc") @nostrip
+fn int putc(int c, CFile stream) @weak @cname("putc") @nostrip
 {
 	unreachable("'putc' not available.");
 }
-fn int putchar(int c) @weak @extern("putchar") @nostrip
+fn int putchar(int c) @weak @cname("putchar") @nostrip
 {
 	unreachable("'putchar' not available.");
 }
-fn int puts(ZString str) @weak @extern("puts") @nostrip
+fn int puts(ZString str) @weak @cname("puts") @nostrip
 {
 	unreachable("'puts' not available.");
 }
@@ -413,17 +407,28 @@ alias SeekIndex = CLong;
 
 struct Tm
 {
-	CInt	tm_sec;		// seconds after the minute [0-60]
-	CInt	tm_min;		// minutes after the hour [0-59]
-	CInt	tm_hour;	// hours since midnight [0-23]
-	CInt	tm_mday;	// day of the month [1-31]
-	CInt	tm_mon;		// months since January [0-11]
-	CInt	tm_year;	// years since 1900
-	CInt	tm_wday;	// days since Sunday [0-6]
-	CInt	tm_yday;	// days since January 1 [0-365]
-	CInt	tm_isdst;	// Daylight Savings Time flag
-	TimeOffset tm_gmtoff @if(!env::WIN32);	/* offset from UTC in seconds */
-	char* tm_zone @if(!env::WIN32);	/* timezone abbreviation */
+	<* seconds after the minute [0-60] *>
+	CInt	tm_sec;
+	<* minutes after the hour [0-59] *>
+	CInt	tm_min;
+	<* hours since midnight [0-23] *>
+	CInt	tm_hour;
+	<* day of the month [1-31] *>
+	CInt	tm_mday;
+	<* months since January [0-11] *>
+	CInt	tm_mon;
+	<* years since 1900 *>
+	CInt	tm_year;
+	<* days since Sunday [0-6] *>
+	CInt	tm_wday;
+	<* days since January 1 [0-365] *>
+	CInt	tm_yday;
+	<* Daylight Savings Time flag *>
+	CInt	tm_isdst;
+	<* offset from UTC in seconds *>
+	TimeOffset tm_gmtoff @if(!env::WIN32);
+	<* timezone abbreviation *>
+	char* tm_zone @if(!env::WIN32);
 	CInt tm_nsec @if(env::WASI);
 }
 
@@ -439,12 +444,12 @@ alias Clock_t @if(env::WIN32) = int;
 alias Clock_t @if(!env::WIN32) = CLong;
 
 alias TimeOffset @if(env::WASI) = int;
-alias TimeOffset @if(!env::WASI) = CLong ;
+alias TimeOffset @if(!env::WASI) = CLong;
 
 const int TIME_UTC = 1;
 
 
-// This is a best-effort aproximation, but the C standard does not enforce
+// This is a best-effort approximation, but the C standard does not enforce
 // that this is a compile-time standard.
 const CLOCKS_PER_SEC @if(env::WIN32) = 1000;
 const CLOCKS_PER_SEC @if(!env::WIN32) = 1000000;

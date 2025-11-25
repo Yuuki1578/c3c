@@ -37,11 +37,11 @@ TypeInfo *parse_type_with_base(ParseContext *c, TypeInfo *type_info);
 Expr* parse_constant_expr(ParseContext *c);
 
 Decl *parse_const_declaration(ParseContext *c, bool is_global, bool is_extern);
-Expr *parse_integer(ParseContext *c, Expr *left);
+Expr *parse_integer(ParseContext *c, Expr *left, SourceSpan lhs_start);
 Expr *parse_decl_or_expr(ParseContext *c);
 void recover_top_level(ParseContext *c);
 Expr *parse_cond(ParseContext *c);
-Ast* parse_compound_stmt(ParseContext *c);
+Ast *parse_compound_stmt(ParseContext *c);
 Ast *parse_short_body(ParseContext *c, TypeInfoId return_type, bool is_regular_fn);
 
 bool parse_attribute(ParseContext *c, Attr **attribute_ref, bool expect_eos);
@@ -54,9 +54,8 @@ Expr *parse_expression_list(ParseContext *c, bool allow_decls);
 Decl *parse_local_decl_after_type(ParseContext *c, TypeInfo *type);
 Decl *parse_var_decl(ParseContext *c);
 bool parse_current_is_expr(ParseContext *c);
-
-bool parse_generic_parameters(ParseContext *c, Expr ***exprs_ref);
-
+bool parse_joined_strings(ParseContext *c, const char **str_ref, size_t *len_ref);
+bool parse_generic_expr_list(ParseContext *c, Expr ***exprs_ref);
 bool parse_parameters(ParseContext *c, Decl ***params_ref,
                       Variadic *variadic, int *vararg_index_ref, ParameterParseKind parse_kind);
 
@@ -78,7 +77,7 @@ bool parse_module(ParseContext *c, AstId contracts);
 bool try_consume(ParseContext *c, TokenType type);
 bool consume(ParseContext *c, TokenType type, const char *message, ...);
 bool consume_const_name(ParseContext *c, const char* type);
-Expr *parse_precedence_with_left_side(ParseContext *c, Expr *left_side, Precedence precedence);
+Expr *parse_precedence_with_left_side(ParseContext *c, Expr *left_side, SourceSpan lhs_start, Precedence precedence);
 
 INLINE const char *symstr(ParseContext *c)
 {
@@ -179,7 +178,6 @@ static inline bool parse_next_may_be_type_or_ident(ParseContext *c)
 	{
 		case TOKEN_CONST_IDENT:
 		case TOKEN_IDENT:
-		case TOKEN_HASH_CONST_IDENT:
 		case TOKEN_HASH_IDENT:
 		case TOKEN_CT_IDENT:
 		case TOKEN_CT_CONST_IDENT:

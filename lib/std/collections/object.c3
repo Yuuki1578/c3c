@@ -178,17 +178,14 @@ fn void Object.init_array_if_needed(&self) @private
 fn void Object.set_object(&self, String key, Object* new_object) @private
 {
 	self.init_map_if_needed();
-	ObjectInternalMapEntry*? entry = self.map.get_entry(key);
-	defer
-	{
-		(void)entry.value.free();
-	}
+	Object*? val = self.map.get_entry(key).value;
+	defer (void)val.free();
 	self.map.set(key, new_object);
 }
 
 <*
  @require self.allocator != null : "This object is not properly initialized, was it really created using 'new'"
- @require !@typeis(value, void*) ||| value == null : "void pointers cannot be stored in an object"
+ @require $typeof(value) != void* ||| value == null : "void pointers cannot be stored in an object"
 *>
 macro Object* Object.object_from_value(&self, value) @private
 {
@@ -206,7 +203,7 @@ macro Object* Object.object_from_value(&self, value) @private
 			return value;
 		$case $Type.typeid == void*.typeid:
 			return &NULL_OBJECT;
-		$case $assignable(value, String):
+		$case $defined(String x = value):
 			return new_string(value, self.allocator);
 		$default:
 			$error "Unsupported object type.";

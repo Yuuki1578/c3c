@@ -13,7 +13,7 @@ union FloatInternal
 }
 
 // Based on the musl implementation
-fn double fmod(double x, double y) @extern("fmod") @weak @nostrip
+fn double fmod(double x, double y) @cname("fmod") @weak @nostrip
 {
 	DoubleInternal ux = { .f = x };
 	DoubleInternal uy = { .f = y };
@@ -35,7 +35,7 @@ fn double fmod(double x, double y) @extern("fmod") @weak @nostrip
 	}
 	else
 	{
-		uxi &= -1UL >> 12;
+		uxi &= (ulong)-1 >> 12;
 		uxi |= 1UL << 52;
 	}
 	if (!ey)
@@ -45,7 +45,7 @@ fn double fmod(double x, double y) @extern("fmod") @weak @nostrip
 	}
 	else
 	{
-		uy.i &= -1UL >> 12;
+		uy.i &= (ulong)-1 >> 12;
 		uy.i |= 1UL << 52;
 	}
 
@@ -83,7 +83,7 @@ fn double fmod(double x, double y) @extern("fmod") @weak @nostrip
 	return ux.f;
 }
 
-fn float fmodf(float x, float y) @extern("fmodf") @weak @nostrip
+fn float fmodf(float x, float y) @cname("fmodf") @weak @nostrip
 {
 	FloatInternal ux = { .f = x };
 	FloatInternal uy = { .f = y };
@@ -105,7 +105,7 @@ fn float fmodf(float x, float y) @extern("fmodf") @weak @nostrip
 	}
 	else
 	{
-		uxi &= -1U >> 9;
+		uxi &= (uint)-1 >> 9;
 		uxi |= 1U << 23;
 	}
 	if (!ey)
@@ -115,7 +115,7 @@ fn float fmodf(float x, float y) @extern("fmodf") @weak @nostrip
 	}
 	else
 	{
-		uy.i &= -1U >> 9;
+		uy.i &= (uint)-1 >> 9;
 		uy.i |= 1U << 23;
 	}
 

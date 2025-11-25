@@ -1,5 +1,34 @@
 module std::os::linux @if(env::LINUX);
-import libc, std::os, std::io, std::collections::list;
+import libc, std::os, std::io, std::collections::list, std::net::os;
+
+// https://man7.org/linux/man-pages/man3/inet_ntop.3.html
+extern fn char** inet_ntop(int, void*, char*, Socklen_t);
+
+// https://linux.die.net/man/3/ntohs
+<*
+* The htonl() function converts the unsigned integer hostlong from host byte order to network byte order.
+*>
+extern fn uint htonl(uint hostlong);
+<*
+* The htons() function converts the unsigned short integer hostshort from host byte order to network byte order.
+*>
+extern fn ushort htons(ushort hostshort);
+<*
+* The ntohl() function converts the unsigned integer netlong from network byte order to host byte order.
+*>
+extern fn uint ntohl(uint netlong);
+<*
+* The ntohs() function converts the unsigned short integer netshort from network byte order to host byte order.
+*>
+extern fn ushort ntohs(ushort netshort);
+
+// https://man7.org/linux/man-pages/man3/bzero.3.html
+<*
+* The bzero() function erases the data in the n bytes of the memory
+* starting at the location pointed to by s, by writing zeros (bytes
+* containing '\0') to that area.
+*>
+extern fn void bzero(char*, usz);
 
 extern fn isz readlink(ZString path, char* buf, usz bufsize);
 
@@ -89,6 +118,35 @@ struct Linux_Dl_info
 	void*       dli_saddr;     /* Address of nearest symbol */
 }
 
+alias Dl_iterate_phdr_callback64 = fn CInt(Linux_dl_phdr_info_64*, usz, void*);
+alias Dl_iterate_phdr_callback32 = fn CInt(Linux_dl_phdr_info_32*, usz, void*);
+extern fn CInt dl_iterate_phdr64(Dl_iterate_phdr_callback64 callback, void* data);
+extern fn CInt dl_iterate_phdr32(Dl_iterate_phdr_callback32 callback, void* data);
+
+struct Linux_dl_phdr_info_64
+{
+	Elf64_Addr  dlpi_addr;
+	ZString     dlpi_name;
+	Elf64_Phdr* dlpi_phdr;
+	Elf64_Half  dlpi_phnum;
+	ulong       dlpi_adds;
+	ulong       dlpi_subs;
+	usz         dlpi_tsl_modid;
+	void*       dlpi_tls_data;
+}
+
+struct Linux_dl_phdr_info_32
+{
+	Elf32_Addr  dlpi_addr;
+	ZString     dlpi_name;
+	Elf32_Phdr* dlpi_phdr;
+	Elf32_Half  dlpi_phnum;
+	ulong       dlpi_adds;
+	ulong       dlpi_subs;
+	usz         dlpi_tsl_modid;
+	void*       dlpi_tls_data;
+}
+
 fn ulong? elf_module_image_base(String path) @local
 {
 	File file = file::open(path, "rb")!;
@@ -130,70 +188,76 @@ fn ulong? elf_module_image_base(String path) @local
 
 fn void? backtrace_add_from_exec(Allocator allocator, BacktraceList* list, void* addr) @local
 {
-	char[] buf = mem::talloc_array(char, 1024);
-
-	String exec_path = process::execute_stdout_to_buffer(buf, {"realpath", "-e", string::tformat("/proc/%d/exe", posix::getpid())})!;
+	char[1024] buf @noinit;
+	String exec_path = process::execute_stdout_to_buffer(&buf, {"realpath", "-e", string::bformat(&&(char[64]){}, "/proc/%d/exe", posix::getpid())})!;
 	String obj_name = exec_path.copy(allocator);
-	String addr2line = process::execute_stdout_to_buffer(buf, {"addr2line", "-p", "-i", "-C", "-f", "-e", exec_path, string::tformat("0x%x", addr)})!;
+	String addr2line = process::execute_stdout_to_buffer(&buf, {"addr2line", "-p", "-i", "-C", "-f", "-e", exec_path, string::bformat(&&(char[64]){}, "0x%x", addr)})!;
 	return backtrace_add_addr2line(allocator, list, addr, addr2line, obj_name, "???");
 }
 
 fn void? backtrace_add_from_dlinfo(Allocator allocator, BacktraceList* list, void* addr, Linux_Dl_info* info) @local
 {
-	char[] buf = mem::talloc_array(char, 1024);
+	char[1024] buf @noinit;
 
 	void*   obj_addr  = addr - (uptr)info.dli_fbase + (uptr)elf_module_image_base(info.dli_fname.str_view())!;
 	ZString obj_path  = info.dli_fname;
 	String  sname     = info.dli_sname ? info.dli_sname.str_view() : "???";
-	String  addr2line = process::execute_stdout_to_buffer(buf, {"addr2line", "-p", "-i", "-C", "-f", "-e", obj_path.str_view(), string::tformat("0x%x", obj_addr - 1)})!;
+	String  addr2line = process::execute_stdout_to_buffer(&buf, {"addr2line", "-p", "-i", "-C", "-f", "-e", obj_path.str_view(), string::bformat(&&(char[64]){}, "0x%x", obj_addr - 1)})!;
 	return backtrace_add_addr2line(allocator, list, addr, addr2line, info.dli_fname.str_view(), sname);
 }
 
 fn Backtrace? backtrace_line_parse(Allocator allocator, String string, String obj_name, String func_name, bool is_inlined)
 {
-	String[] parts = string.trim().tsplit(" at ");
-	if (parts.len != 2) return NOT_FOUND?;
-
-	uint line   = 0;
-	String source = "";
-	if (!parts[1].contains("?") && parts[1].contains(":"))
+	@stack_mem(256; Allocator mem)
 	{
-		usz index = parts[1].rindex_of_char(':')!;
-		source = parts[1][:index];
-		line   = parts[1][index + 1..].to_uint()!;
-	}
-	return {
-		.function    = parts[0].copy(allocator),
-		.object_file = obj_name.copy(allocator),
-		.file        = source.copy(allocator),
-		.line        = line,
-		.allocator   = allocator,
-		.is_inline   = is_inlined
+		String[] parts = string.trim().split(mem, " at ");
+		if (parts.len != 2) return NOT_FOUND?;
+
+		uint line   = 0;
+		String source = "";
+		if (!parts[1].contains("?") && parts[1].contains(":"))
+		{
+			usz index = parts[1].rindex_of_char(':')!;
+			source = parts[1][:index];
+			line   = parts[1][index + 1..].to_uint()!;
+		}
+		return {
+			.function    = parts[0].copy(allocator),
+			.object_file = obj_name.copy(allocator),
+			.file        = source.copy(allocator),
+			.line        = line,
+			.allocator   = allocator,
+			.is_inline   = is_inlined
+		};
 	};
+
 }
 fn void? backtrace_add_addr2line(Allocator allocator, BacktraceList* list, void* addr, String addr2line, String obj_name, String func_name) @local
 {
-	String[] inline_parts = addr2line.tsplit("(inlined by)");
-	usz last = inline_parts.len - 1;
-	foreach (i, part : inline_parts)
+	@stack_mem(1024; Allocator mem)
 	{
-		bool is_inline = i != last;
-		Backtrace? trace = backtrace_line_parse(allocator, part, obj_name, func_name, is_inline);
-		if (catch trace)
+		String[] inline_parts = addr2line.split(mem, "(inlined by)");
+		usz last = inline_parts.len - 1;
+		foreach (i, part : inline_parts)
 		{
-			list.push({
-				.function    = func_name.copy(allocator),
-				.object_file = obj_name.copy(allocator),
-				.offset      = (uptr)addr,
-				.file        = "".copy(allocator),
-				.line        = 0,
-				.allocator   = allocator,
-				.is_inline   = is_inline
-			});
-			continue;
+			bool is_inline = i != last;
+			Backtrace? trace = backtrace_line_parse(allocator, part, obj_name, func_name, is_inline);
+			if (catch trace)
+			{
+				list.push({
+					.function    = func_name.copy(allocator),
+					.object_file = obj_name.copy(allocator),
+					.offset      = (uptr)addr,
+					.file        = "".copy(allocator),
+					.line        = 0,
+					.allocator   = allocator,
+					.is_inline   = is_inline
+				});
+				continue;
+			}
+			list.push(trace);
 		}
-		list.push(trace);
-	}
+	};
 }
 
 fn void? backtrace_add_element(Allocator allocator, BacktraceList *list, void* addr) @local
@@ -204,15 +268,12 @@ fn void? backtrace_add_element(Allocator allocator, BacktraceList *list, void* a
 		return;
 	}
 
-	@pool()
+	Linux_Dl_info info;
+	if (dladdr(addr, &info) == 0)
 	{
-		Linux_Dl_info info;
-		if (dladdr(addr, &info) == 0)
-		{
-			return backtrace_add_from_exec(allocator, list, addr);
-		}
-		return backtrace_add_from_dlinfo(allocator, list, addr, &info);
-	};
+		return backtrace_add_from_exec(allocator, list, addr);
+	}
+	return backtrace_add_from_dlinfo(allocator, list, addr, &info);
 }
 
 fn BacktraceList? symbolize_backtrace(Allocator allocator, void*[] backtrace)
@@ -227,12 +288,9 @@ fn BacktraceList? symbolize_backtrace(Allocator allocator, void*[] backtrace)
 		}
 		list.free();
 	}
-	@pool()
+	foreach (addr : backtrace)
 	{
-		foreach (addr : backtrace)
-		{
-			backtrace_add_element(allocator, &list, addr)!;
-		}
-	};
+		backtrace_add_element(allocator, &list, addr)!;
+	}
 	return list;
 }
